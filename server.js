@@ -150,7 +150,7 @@ async function connectToMongoDB() {
     console.error('Error connecting to MongoDB:', error);
   }
 }
-connectToMongoDB();
+
 
 // async function main() {
 //   await mongoose.connect("mongodb://127.0.0.1:27017/userDB", {
@@ -165,7 +165,16 @@ connectToMongoDB();
 
 // main().catch((err) => console.log(err));
 
-server.listen(8080, () => {
-  console.log("server started");
-});
+async function startServer() {
+  try {
+    await connectToMongoDB();
 
+    server.listen(8080, () => {
+      console.log("Server started on port 8080");
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+  }
+}
+
+startServer();
