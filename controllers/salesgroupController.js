@@ -1,4 +1,4 @@
-const SalesGroup = require('../models/salesGroupModel');
+const SalesGroup = require('../models/salesgroupModel');
 
 exports.addSalesGroup = async (req, res) => {
     try {
