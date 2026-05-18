@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const salesGroupController = require('../controllers/salesGroupController');
+const salesGroupController = require('../controllers/salesgroupController');
 
 router.post('/', salesGroupController.addSalesGroup);
 
