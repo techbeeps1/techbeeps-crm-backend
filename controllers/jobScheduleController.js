@@ -3,7 +3,7 @@ const { ObjectId } = require("mongodb");
 const Customer = require("../models/customer");
 const notes = require("../models/job/notes");
 const FinancialProcess = require("../models/job/financialProcess");
-const Package = require('../models/packageModel')
+const Package = require('../models/PackageModel')
 
 exports.jobSchedule = async (req, res) => {
   try {

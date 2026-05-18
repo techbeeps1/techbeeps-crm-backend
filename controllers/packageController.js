@@ -1,4 +1,4 @@
-const Package = require('../models/packageModel'); // Adjust the path according to your project structure
+const Package = require('../models/PackageModel'); // Adjust the path according to your project structure
 
 // Create a new package
 exports.createPackage = async (req, res) => {

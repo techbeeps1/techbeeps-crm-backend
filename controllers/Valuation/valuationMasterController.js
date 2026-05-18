@@ -1,6 +1,6 @@
 const JobSchedule = require("../../models/jobSchedule");
 const Customer = require("../../models/customer");
-const Package = require('../../models/packageModel');
+const Package = require('../../models/PackageModel');
 const Notes = require("../../models/job/notes");
 const Finance = require('../../models/finance');
 const ValuationRooms = require('../../models/Valuation/valuationRoomDetail');
