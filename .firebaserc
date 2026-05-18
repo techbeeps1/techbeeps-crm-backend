@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "crm-backend-b5cb8",
+    "production": "crm-backend-b5cb8"
+  },
+  "targets": {},
+  "etags": {}
+}

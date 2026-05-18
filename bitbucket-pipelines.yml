@@ -1,0 +1,43 @@
+# Template NodeJS build
+
+# This template allows you to validate your NodeJS code.
+# The workflow allows running tests and code linting on the default branch.
+
+image: node:16
+
+# pipelines:
+#   default:
+#     - parallel:
+#         - step:
+#             name: Build and Test
+#             caches:
+#               - node
+#             script:
+#               - npm install
+#               - npm test
+#         - step:
+#             name: Code linting
+#             script:
+#               - node
+
+#     - step:
+#         name: Deploy to Firebase
+#         caches:
+#           - node
+#         script:
+#           - npm install -g firebase-tools  # Install Firebase CLI
+#           - firebase deploy --token $FIREBASE_TOKEN --project $FIREBASE_PROJECT_ID --only                 functions  # Deploy functions
+#           - firebase deploy --token $FIREBASE_TOKEN --project $FIREBASE_PROJECT_ID --only                 hosting  # Deploy hosting
+
+
+pipelines:
+  default:
+    - step:
+        name: Sync GitHub Mirror
+        image: alpine/git:latest
+        clone:
+          enabled: false
+        script:
+          - git clone --bare https://anaya_muskan:${BITBUCKET_APP_PASSWORD}@bitbucket.org/RepoOrg/RepoName.git
+          - cd RepoName.git
+          - git push --mirror https://Muskan-Shekh:${GITHUB_TOKEN}@github.com/RepoOrg/RepoName.git
