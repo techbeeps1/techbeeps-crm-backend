@@ -39,7 +39,7 @@ async function connectToDatabase() {
   }
 }
 
-
+connectToDatabase();
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
 
@@ -240,20 +240,13 @@ async function startServer() {
       console.log("Server running on port 4040 🚀");
     });
 
-   // const wss = new ws.WebSocketServer({ server });
+ //   const wss = new ws.WebSocketServer({ server });
 
-    wss.on('connection', (connection, req) => {
+ //   wss.on('connection', (connection, req) => {
       // tumhara websocket code same rahega
-    });
+ //   });
 
-  } catch (err) {
-    console.error("Server startup failed:", err);
-  }
-}
-
-startServer();
-
-const wss = new ws.WebSocketServer({ server });
+ const wss = new ws.WebSocketServer({ server });
 wss.on('connection', (connection, req) => {
   function notifyAboutOnlinePeople() {
     [...wss.clients].forEach(client => {
@@ -331,3 +324,12 @@ wss.on('connection', (connection, req) => {
   // notify everyone about online people (when someone connects)
   notifyAboutOnlinePeople();
 });
+
+
+  } catch (err) {
+    console.error("Server startup failed:", err);
+  }
+}
+
+startServer();
+
