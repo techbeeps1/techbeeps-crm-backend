@@ -14,17 +14,20 @@ const router = express.Router();
 //     }
 // });
 
-const upload = multer({
-    dest: 'uploads/',  // Temporary upload folder at the root of the project
-    fileFilter: (req, file, cb) => {
-      if (file.mimetype === 'image/svg+xml') {
-        cb(null, true);  // Accept the file
-      } else {
-        cb(new Error('Only SVG files are allowed!'));  // Reject non-SVG files
-      }
-    }
-  });
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "image/svg+xml") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only SVG files are allowed!"));
+    }
+  },
+});
+
+module.exports = upload;
 router.post('/upload', upload.single('icon'), async (req, res) => {
     try {
         const { name } = req.body;
