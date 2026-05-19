@@ -53,29 +53,21 @@ const allowedOrigins = [
   'http://localhost:5173',
   'https://universal-movers-front.vercel.app',
   'https://universal-movers-front-3wr2.vercel.app',
-  'https://techbeepcrm.netlify.app'
+  
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // Allow requests with no origin (like mobile apps or curl requests)
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true
-}));
-
-app.use((req, res, next) => {
+server.use((req, res, next) => {
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Origin', origin);
   }
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS,POST,PUT');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
   next();
 });
 
