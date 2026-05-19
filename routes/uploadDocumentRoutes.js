@@ -50,8 +50,10 @@ const uploadFile = new Upload({
       document.email = req.body.email; 
       document.isEmployee = req.body.isEmployee;
     }
+    const fileUrl = `${process.env.R2_PUBLIC_URL}/${result.Key}`;
+
     document.path = result.Location || `s3://${result.Bucket}/${result.Key}`; // URL or S3 URI
-    document.name = result.Key; // S3 object key (file name in bucket)
+    document.name = fileUrl; // S3 object key (file name in bucket)
     document.fileName = req.body.fileName;
     document.documentType = req.body.documentType;
 
@@ -59,8 +61,8 @@ const uploadFile = new Upload({
     // Save result.Location or result.Key to DB if needed
     return res.status(200).json({
       status: true,
-      msg: "File uploaded to S3 successfully",
-      data: result,
+      msg: "File uploaded  successfully",
+      data: fileUrl,
     });
   } catch (err) {
     console.error(err);
