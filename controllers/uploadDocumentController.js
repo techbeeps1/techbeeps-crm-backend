@@ -1,13 +1,20 @@
 const Document = require("../models/document");
-const fs = require('fs');  // For local file system storage
-const path = require('path');
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-const stream = require('stream');
-const util = require('util');
-const s3Client = new S3Client({ region: 'eu-north-1' }); // your region
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { S3Client, GetObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+
+// Cloudflare R2 Client
+const s3Client = new S3Client({
+  region: "auto",
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID.trim(),
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY.trim(),
+  },
+});
 
 
+// Upload Document
 exports.uploadDocument = async (req, res) => {
   try {
     if (!req.file) {
@@ -17,21 +24,38 @@ exports.uploadDocument = async (req, res) => {
         data: null,
       });
     }
+
     let document = new Document();
-    document.customer = req.body.customer;
-    document.path = req.file.path;
-    document.name = req.file.filename;
+
+    if (req.body.customer) {
+      document.customer = req.body.customer;
+    }
+
+    if (req.body.email && req.body.isEmployee) {
+      document.email = req.body.email;
+      document.isEmployee = req.body.isEmployee;
+    }
+
+    // Public file path from R2
+    document.path = `${process.env.R2_PUBLIC_URL}/${req.file.key}`;
+
+    // File key stored in DB
+    document.name = req.file.key;
+
     document.fileName = req.body.fileName;
     document.documentType = req.body.documentType;
 
     const data = await document.save();
+
     return res.status(200).json({
       status: true,
       msg: "File uploaded successfully",
-      data: data,
+      data,
     });
+
   } catch (error) {
     console.error(error);
+
     return res.status(500).json({
       status: false,
       msg: "An error occurred while uploading the file",
@@ -40,128 +64,98 @@ exports.uploadDocument = async (req, res) => {
   }
 };
 
+
+// Document List
 exports.documentList = async (req, res) => {
   try {
-    const { customer , email, isEmployee } = req.query; // Get the customer from the query parameters
-    const filter = customer ? { customer : customer } : { email: email, isEmployee: isEmployee};
+    const { customer, email, isEmployee } = req.query;
+
+    const filter = customer
+      ? { customer }
+      : { email, isEmployee };
+
     const documentList = await Document.find(filter);
+
     res.json({
-      documentList: documentList,
+      documentList,
     });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+
+    res.status(500).json({
+      message: "Server error",
+    });
   }
 };
 
 
-// exports.downloadFile = (req, res) => {
-//   const { filename } = req.params; // Get filename from URL parameter
-//   const filePath = path.join(__dirname, '..', 'uploads', filename); // Resolve file path
-//   fs.exists(filePath, (exists) => {
-//     if (!exists) {
-//       return res.status(404).json({ message: 'File not found' }); // Return 404 if file does not exist
-//     }
-//     res.download(filePath, filename, (err) => {
-//       if (err) {
-//         console.error('Error sending file:', err); // Log any error
-//         return res.status(500).json({ message: 'Error sending file' });
-//       }
-//     });
-//   });
-// };
-
-
+// Download File
 exports.downloadFile = async (req, res) => {
   const { filename } = req.params;
 
   try {
     const command = new GetObjectCommand({
-      Bucket: 'osnl-videos',
+      Bucket: process.env.R2_BUCKET_NAME,
       Key: filename,
     });
 
-    // Signed URL expires in 60 seconds
-    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+    // Signed URL valid for 60 seconds
+    const signedUrl = await getSignedUrl(
+      s3Client,
+      command,
+      { expiresIn: 60 }
+    );
 
-    // Redirect user to S3 URL
     return res.redirect(signedUrl);
 
   } catch (error) {
-    console.error('Error generating signed URL:', error);
-    return res.status(500).json({ message: 'Error downloading file' });
+    console.error("Error generating signed URL:", error);
+
+    return res.status(500).json({
+      message: "Error downloading file",
+      error: error.message,
+    });
   }
 };
 
-//  exports.downloadFile = async (req, res) => {
-//   const { filename } = req.params;
 
-//   try {
-//     const getObjectParams = {
-//       Bucket: 'osnl-videos',  // your bucket name
-//       Key: filename,          // file key in S3
-//     };
-
-//     const command = new GetObjectCommand(getObjectParams);
-//     const data = await s3Client.send(command);
-
-//     // data.Body is a readable stream. We pipe it to the response.
-//     res.attachment(filename);  // sets Content-Disposition header
-
-//     // Pipe the S3 stream to response
-//     data.Body.pipe(res).on('error', (err) => {
-//       console.error('Error streaming file from S3:', err);
-//       res.status(500).json({ message: 'Error downloading file' });
-//     });
-
-//   } catch (error) {
-//     if (error.name === 'NoSuchKey') {
-//       return res.status(404).json({ message: 'File not found' });
-//     }
-//     console.error('Error fetching file from S3:', error);
-//     res.status(500).json({ message: 'Error downloading file' });
-//   }
-// };
-
-
+// Delete Document
 exports.deleteDocument = async (req, res) => {
-  const documentId = req.params.id;  // The ID of the document to be deleted
+  const documentId = req.params.id;
 
   try {
     const document = await Document.findById(documentId);
+
     if (!document) {
-      return res.status(404).json({ message: 'Document not found' });
-    }
-    if (document.path) {
-      const filePath = path.join(__dirname, '..', 'uploads', document.name);  // Use document.path if it's storing the file path
-      fs.access(filePath, fs.constants.F_OK, async (err) => {
-        if (err) {
-          console.log('File not found, skipping deletion');
-        } else {
-          try {
-            await new Promise((resolve, reject) => {
-              fs.unlink(filePath, (err) => {
-                if (err) {
-                  console.error('Error deleting file:', err);
-                  return reject(new Error('Error deleting file'));
-                }
-                resolve();
-              });
-            });
-          } catch (error) {
-            console.error('Error during file deletion:', error);
-          }
-        }
-        await Document.findByIdAndDelete(documentId);
-        res.status(200).json({ message: 'Document deleted successfully' });
+      return res.status(404).json({
+        message: "Document not found",
       });
-    } else {
-      await Document.findByIdAndDelete(documentId);
-      res.status(200).json({ message: 'Document deleted successfully' });
     }
+
+    // Delete file from Cloudflare R2
+    if (document.name) {
+      const command = new DeleteObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: document.name,
+      });
+
+      await s3Client.send(command);
+    }
+
+    // Delete MongoDB record
+    await Document.findByIdAndDelete(documentId);
+
+    return res.status(200).json({
+      message: "Document deleted successfully",
+    });
+
   } catch (err) {
-    console.error('Error deleting document:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error deleting document:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
-
