@@ -18,35 +18,35 @@
 // module.exports = upload;
 
 
-const multer = require('multer');
-const AWS = require('aws-sdk');
-const multerS3 = require('multer-s3');
+// const multer = require('multer');
+// const AWS = require('aws-sdk');
+// const multerS3 = require('multer-s3');
 
-// Set up AWS S3 configuration
-const s3 = new AWS.S3({
-  accessKeyId: 'AKIAQXUIXOEJW7GZNDWK', // Ensure these are set in your environment or config
-  secretAccessKey: 'xnxiywexRkCoGTtyqGF8bmYCkSDmlOiK8nqu6Xa/',
-  region: 'eu-north-1', // e.g. 'us-east-1'
-});
+// // Set up AWS S3 configuration
+// const s3 = new AWS.S3({
+//   accessKeyId: '', // Ensure these are set in your environment or config
+//   secretAccessKey: '/',
+//   region: 'eu-north-1', // e.g. 'us-east-1'
+// });
 
-// Set up multer to use S3 storage
-const storage = multerS3({
-  s3: s3,
-  bucket: 'osnl-videos', // Replace with your actual S3 bucket name
-  acl: 'public-read', // This can be adjusted to your needs (e.g., private, public-read)
-  metadata: function (req, file, cb) {
-    cb(null, { fieldName: file.fieldname });
-  },
-  key: function (req, file, cb) {
-    // Generate a unique file name based on the current timestamp
-    cb(null, Date.now() + '-' + file.originalname);
-  }
-});
+// // Set up multer to use S3 storage
+// const storage = multerS3({
+//   s3: s3,
+//   bucket: 'osnl-videos', // Replace with your actual S3 bucket name
+//   acl: 'public-read', // This can be adjusted to your needs (e.g., private, public-read)
+//   metadata: function (req, file, cb) {
+//     cb(null, { fieldName: file.fieldname });
+//   },
+//   key: function (req, file, cb) {
+//     // Generate a unique file name based on the current timestamp
+//     cb(null, Date.now() + '-' + file.originalname);
+//   }
+// });
 
-// Create multer upload instance with the S3 storage
-const upload = multer({ storage: storage });
+// // Create multer upload instance with the S3 storage
+// const upload = multer({ storage: storage });
 
-module.exports = upload;
+// module.exports = upload;
 
 
 //another updated code 
