@@ -52,7 +52,7 @@ const uploadFile = new Upload({
     }
     const fileUrl = `${process.env.R2_PUBLIC_URL}/${result.Key}`;
 
-    document.path = result.Location || `s3://${result.Bucket}/${result.Key}`; // URL or S3 URI
+    document.path = fileUrl; // URL or S3 URI
     document.name = fileUrl; // S3 object key (file name in bucket)
     document.fileName = req.body.fileName;
     document.documentType = req.body.documentType;
