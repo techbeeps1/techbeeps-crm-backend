@@ -10,10 +10,11 @@ const { S3Client } = require("@aws-sdk/client-s3");
 
 // S3 v3 client
 const s3Client = new S3Client({
-  region: "eu-north-1",
+  region: "auto",
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
-    accessKeyId: "AKIAQXUIXOEJW7GZNDWK",
-    secretAccessKey: "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",
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
 });
 
@@ -27,17 +28,20 @@ router.post("/uploadDocument", upload.single("file"), async (req, res) => {
       return res.status(400).json({ msg: "No file uploaded" });
     }
 
-    const upload = new Upload({
-      client: s3Client,
-      params: {
-        Bucket: "osnl-videos",
-        Key: Date.now() + "-" + req.file.originalname,
-        Body: req.file.buffer,
-        // ACL: 'public-read',
-      },
-    });
+   const fileName = `documents/${Date.now()}-${req.file.originalname}`;
 
-    const result = await upload.done();
+const uploadFile = new Upload({
+  client: s3Client,
+  params: {
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: fileName,
+    Body: req.file.buffer,
+    ContentType: req.file.mimetype,
+  },
+});
+
+      const result = await uploadFile.done();
+
     let document = new Document();
     if (req.body.customer) {
       document.customer = req.body.customer; // Mongoose will cast it if it's a valid ID

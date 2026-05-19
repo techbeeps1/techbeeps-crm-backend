@@ -32,28 +32,16 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 //     });
 // };
 
-// Configure AWS S3
-// const s3Client = new S3Client({
-//   region: "eu-north-1", 
-//   credentials: {
-//     accessKeyId: "AKIAQXUIXOEJW7GZNDWK",
-//     secretAccessKey: "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",
-//   },
-// });
 
-const R2_ACCESS_KEY_ID = '86e7c8750f971530a62df05ab27826c9';
-const R2_SECRET_ACCESS_KEY = 'a6b043c8fc95e6f2265d6c82a4aa2aa2be1e99fa16a0a48fbbe00656285de44c';
-const R2_ACCOUNT_ID ='bd180543ec0684702fc362cb40a3aee7';
-const R2_BUCKET_NAME ='umcrm';
-const R2_PUBLIC_URL = 'https://pub-5a1825f2dbec4d2eb0b6c533f4b0fa5f.r2.dev';
+
 
 
 const s3Client = new S3Client({
   region: "auto",
-  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey:R2_SECRET_ACCESS_KEY,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
 });
 
@@ -107,7 +95,7 @@ try {
   const fileName = `logos/${Date.now()}_${req.file.originalname}`;
 
   const uploadParams = {
-    Bucket: R2_BUCKET_NAME,
+    Bucket: process.env.R2_BUCKET_NAME,
     Key: fileName,
     Body: req.file.buffer,
     ContentType: req.file.mimetype,
@@ -117,7 +105,7 @@ try {
 
   await s3Client.send(command);
 
-  const fileUrl = `${R2_PUBLIC_URL}/${fileName}`;
+  const fileUrl = `${process.env.R2_PUBLIC_URL}/${fileName}`;
 
   return res.status(200).json({
     message: "File uploaded successfully",
