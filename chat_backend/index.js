@@ -39,7 +39,7 @@ async function connectToDatabase() {
   }
 }
 
-connectToDatabase();
+
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
 
@@ -230,7 +230,28 @@ app.post('/chatBackend/register', async (req, res) => {
   }
 });
 
-const server = app.listen(4040);
+
+
+async function startServer() {
+  try {
+    await connectToDatabase();
+
+    const server = app.listen(4040, () => {
+      console.log("Server running on port 4040 🚀");
+    });
+
+   // const wss = new ws.WebSocketServer({ server });
+
+    wss.on('connection', (connection, req) => {
+      // tumhara websocket code same rahega
+    });
+
+  } catch (err) {
+    console.error("Server startup failed:", err);
+  }
+}
+
+startServer();
 
 const wss = new ws.WebSocketServer({ server });
 wss.on('connection', (connection, req) => {
