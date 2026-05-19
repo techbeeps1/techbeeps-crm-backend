@@ -18,36 +18,49 @@
 // module.exports = upload;
 
 
-// const multer = require('multer');
-// const AWS = require('aws-sdk');
-// const multerS3 = require('multer-s3');
+const multer = require("multer");
+const multerS3 = require("multer-s3");
+const { S3Client } = require("@aws-sdk/client-s3");
 
-// // Set up AWS S3 configuration
-// const s3 = new AWS.S3({
-//   accessKeyId: '', // Ensure these are set in your environment or config
-//   secretAccessKey: '/',
-//   region: 'eu-north-1', // e.g. 'us-east-1'
-// });
+// Cloudflare R2 client
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID.trim(),
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY.trim(),
+  },
+});
 
-// // Set up multer to use S3 storage
-// const storage = multerS3({
-//   s3: s3,
-//   bucket: 'osnl-videos', // Replace with your actual S3 bucket name
-//   acl: 'public-read', // This can be adjusted to your needs (e.g., private, public-read)
-//   metadata: function (req, file, cb) {
-//     cb(null, { fieldName: file.fieldname });
-//   },
-//   key: function (req, file, cb) {
-//     // Generate a unique file name based on the current timestamp
-//     cb(null, Date.now() + '-' + file.originalname);
-//   }
-// });
+// Multer + Cloudflare R2 storage
+const storage = multerS3({
+  s3,
+  bucket: process.env.R2_BUCKET_NAME,
 
-// // Create multer upload instance with the S3 storage
-// const upload = multer({ storage: storage });
+  contentType: multerS3.AUTO_CONTENT_TYPE,
 
-// module.exports = upload;
+  metadata: function (req, file, cb) {
+    cb(null, {
+      fieldName: file.fieldname,
+    });
+  },
 
+  key: function (req, file, cb) {
+    const fileName = `uploads/${Date.now()}-${file.originalname}`;
+    cb(null, fileName);
+  },
+});
+
+// Upload instance
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+});
+
+module.exports = upload;
 
 //another updated code 
 
