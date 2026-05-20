@@ -46,15 +46,35 @@ exports.createFurnitureType = async (req, res) => {
 // Update an existing furniture type
 exports.updateFurnitureType = async (req, res) => {
     const { id } = req.params;
+
     try {
-        const updatedFurnitureType = await FurnitureType.findByIdAndUpdate(id, req.body, {
-            new: true, // Return the updated document
-            runValidators: true, // Ensure validation rules are applied
-        });
-        if (!updatedFurnitureType) return res.status(404).json({ error: "Furniture type not found" });
+        const updateData = {
+            ...req.body.formData,
+            iconFileName: req.body.iconFileName
+        };
+
+        const updatedFurnitureType =
+            await FurnitureType.findByIdAndUpdate(
+                id,
+                updateData,
+                {
+                    new: true,
+                    runValidators: true
+                }
+            );
+
+        if (!updatedFurnitureType) {
+            return res.status(404).json({
+                error: "Furniture type not found"
+            });
+        }
+
         res.status(200).json(updatedFurnitureType);
+
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({
+            error: error.message
+        });
     }
 };
 
