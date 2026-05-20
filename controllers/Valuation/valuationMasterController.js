@@ -11,16 +11,7 @@ exports.valuationMaster = async (req, res) => {
         let job;
 
         // 1️⃣ **Check if Job Exists or Create New**
-        if (jobId) {
-            job = await JobSchedule.findById(jobId);
-            if (!job) {
-                job = await JobSchedule.create({ status: 'execution' });
-            }
-        } else {
-            job = await JobSchedule.create({ status: 'execution' });
-        }
 
-        // 2️⃣ **Check if Customer Exists or Create New**
         let customerExists;
         if (customer?._id) {
             customerExists = await Customer.findById(customer._id);
@@ -32,6 +23,17 @@ exports.valuationMaster = async (req, res) => {
         } else {
             customerExists = await Customer.create(customer);
         }
+        if (jobId) {
+            job = await JobSchedule.findById(jobId);
+            if (!job) {
+                job = await JobSchedule.create({ status: 'execution' });
+            }
+        } else {
+            job = await JobSchedule.create({ status: 'execution' });
+        }
+
+        // 2️⃣ **Check if Customer Exists or Create New**
+  
 
         // 3️⃣ **Check if Package Exists**
         let packageExists = await Package.findById(package);
@@ -56,8 +58,10 @@ exports.valuationMaster = async (req, res) => {
         }
 
         // 6️⃣ **Handle Relocation Details (if applicable)**
+
         let relocationDetails = job.relocation || {};
-        relocationDetails = { ...relocation };
+       
+           relocationDetails = { ...relocation };
 
         // 7️⃣ **Handle Rooms and Materials**
         let valuationRoomsData = rooms?.map(room => ({
@@ -96,10 +100,25 @@ exports.valuationMaster = async (req, res) => {
             message: 'Job schedule successfully updated',
         });
 
-    } catch (error) {
-        console.error('Error in valuationMaster:', error);
-        return res.status(500).json({ message: 'Internal Server Error', error: error.message });
+    }  catch (error) {
+    console.error('Error in valuationMaster:', error);
+
+    // duplicate email error
+    if (
+        error.code === 11000 &&
+        error.keyPattern?.email
+    ) {
+        return res.status(400).json({
+            message:
+                'Customer email already exists'
+        });
     }
+
+    return res.status(500).json({
+        message: 'Something went wrong',
+        error: error.message
+    });
+}
 };
 
 exports.allValuationsRooms = async (req, res) => {
