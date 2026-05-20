@@ -46,13 +46,11 @@ exports.createFurnitureType = async (req, res) => {
 // Update an existing furniture type
 exports.updateFurnitureType = async (req, res) => {
     const { id } = req.params;
-
     try {
         const updateData = {
             ...req.body.formData,
             iconFileName: req.body.iconFileName
         };
-
         const updatedFurnitureType =
             await FurnitureType.findByIdAndUpdate(
                 id,
@@ -69,7 +67,7 @@ exports.updateFurnitureType = async (req, res) => {
             });
         }
 
-        res.status(200).json(updatedFurnitureType);
+        res.status(200).json({ message: "Furniture type updated successfully" });
 
     } catch (error) {
         res.status(400).json({

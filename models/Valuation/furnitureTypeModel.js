@@ -4,7 +4,7 @@ const furnitureTypeSchema = new mongoose.Schema(
     {
         furnitureTypeName: {
             type: String,
-            unique: true,
+           
         },
         cubicMeter: {
             type: Number,
