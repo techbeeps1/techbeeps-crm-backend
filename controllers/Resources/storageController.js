@@ -227,38 +227,59 @@ exports.deleteStorage = async (req, res) => {
 
 exports.DownloadInvoicePDF = async (req, res) => {
     const { Id, financialTemplate, lastInvoiceDate } = req.body;
+
     try {
-        const storage = await Storage.findById(Id).populate('warehouse').populate('storageLocation').populate('customer').populate({
-            path: 'events',
-            populate: [
-                { path: 'storageLocation', select: 'name' },
-                { path: 'loadedByEmployee', select: '-contract -drivingLicense -password -skills' },
-                { path: 'ReleasedByEmployee', select: '-contract -drivingLicense -password -skills' },
-            ],
-        });
+        const storage = await Storage.findById(Id)
+            .populate('warehouse')
+            .populate('storageLocation')
+            .populate('customer')
+            .populate({
+                path: 'events',
+                options: {
+                    sort: { createdAt: -1 } // latest first
+                    // sort: { eventDate: 1 } // use your field name
+                },
+                populate: [
+                    { path: 'storageLocation', select: 'name' },
+                    {
+                        path: 'loadedByEmployee',
+                        select: '-contract -drivingLicense -password -skills'
+                    },
+                    {
+                        path: 'ReleasedByEmployee',
+                        select: '-contract -drivingLicense -password -skills'
+                    }
+                ]
+            });
+
         if (!storage) {
             return res.status(404).send('storage not found');
         }
+
         const company = await CompanyDetails.findOne();
         const emailTemplate = await financial.findById(financialTemplate);
+
         const data = {
-            company: company,
+            company,
             customer: storage.customer,
-            storage: storage,
-            lastInvoiceDate: lastInvoiceDate,
-            startDate: (storage.invoicingStartDate).toLocaleString(),
-            endDate: (new Date(lastInvoiceDate)).toLocaleString()
+            storage,
+            lastInvoiceDate,
+            startDate: storage.invoicingStartDate?.toLocaleString(),
+            endDate: new Date(lastInvoiceDate)?.toLocaleString()
         };
 
         let html = emailTemplate.htmlContent;
 
         const pdfBuffer = await generatePdf(html, data);
+
         res.set({
             'Content-Type': 'application/pdf',
             'Content-Disposition': 'attachment; filename="invoice.pdf"',
             'Content-Length': pdfBuffer.length,
         });
+
         res.send(pdfBuffer);
+
     } catch (error) {
         console.error("Error generating PDF:", error);
         res.status(500).send("Error generating PDF");
@@ -334,181 +355,94 @@ exports.sendInvoicePDF = async (req, res) => {
     }
 };
 
+const pdf = require("html-pdf");
+
 async function generatePdf(htmlContent, data) {
+
     const itemsHtml = `
     <div>
-        <table style="width: 100%; border-collapse: collapse; padding-top: 30px;">
+        <table style="width:100%; border-collapse: collapse;">
             <thead>
                 <tr>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Description</th>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Item Code</th>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Contents</th>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Loaded On</th>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Loaded by Employee</th>
-                    <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Loaded By Customer</th>
+                    <th>Description</th>
+                    <th>Item Code</th>
+                    <th>Contents</th>
+                    <th>Loaded On</th>
+                    <th>Employee</th>
+                    <th>Customer</th>
                 </tr>
             </thead>
             <tbody>
                 ${data.storage?.events.map(item => `
                     <tr>
-                        <td style="padding:10px 5px; font-weight: bold;">${item.description}</td>
-                        <td style="padding:10px 5px; font-weight: bold;">${item.itemCode}</td>
-                        <td style="padding:10px 5px; font-weight: bold;">${item.contents}m<sup>3</sup></td>
-                        <td style="padding:10px 5px; font-weight: bold;">${new Date(item.loadedOn).toLocaleDateString()}</td>
-                        <td style="padding:10px 5px; font-weight: bold;">${item.loadedByEmployee?.username || ''}</td>
-                        <td style="padding:10px 5px; font-weight: bold;">${item.loadedByCustomer ? 'Yes' : 'No'}</td>
+                        <td>${item.description}</td>
+                        <td>${item.itemCode}</td>
+                        <td>${item.contents}m³</td>
+                        <td>${new Date(item.loadedOn).toLocaleDateString()}</td>
+                        <td>${item.loadedByEmployee?.username || ''}</td>
+                        <td>${item.loadedByCustomer ? 'Yes' : 'No'}</td>
                     </tr>
                 `).join('')}
             </tbody>
         </table>
     </div>
-`;
+    `;
+
     const actionHtml = `
-<div>
-    <table style="width: 100%; border-collapse: collapse; padding-top: 30px;">
-        <thead>
-            <tr>
-                <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Description</th>
-                <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Date</th>
-                <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Amount</th>
-                <th style="border-bottom: 1px solid #ccc; font-weight: bold; padding:10px 5px;">Quantity</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${data.storage?.costAction.map(item => `
+    <div>
+        <table style="width:100%; border-collapse: collapse;">
+            <thead>
                 <tr>
-                    <td style="padding:10px 5px; font-weight: bold;">${item?.description}</td>
-                    <td style="padding:10px 5px; font-weight: bold;">${new Date(item?.actionDate).toLocaleDateString()}</td>
-                    <td style="padding:10px 5px; font-weight: bold;">${item?.price} $</td>
-                    <td style="padding:10px 5px; font-weight: bold;">${item?.quantity}</td>
+                    <th>Description</th>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Quantity</th>
                 </tr>
-            `).join('')}
-        </tbody>
-    </table>
-</div>
-`;
-    const calculateSubTotal = (price, startDate, endDate, periodType, invoicePerVolume, volume) => {
-        if (!price || !startDate || !endDate || !periodType) {
-            throw new Error("Invalid inputs. Please provide price, startDate, endDate, and periodType.");
+            </thead>
+            <tbody>
+                ${data.storage?.costAction.map(item => `
+                    <tr>
+                        <td>${item?.description}</td>
+                        <td>${new Date(item?.actionDate).toLocaleDateString()}</td>
+                        <td>${item?.price} $</td>
+                        <td>${item?.quantity}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    </div>
+    `;
+
+    const populatedHtml = htmlContent.replace(
+        /{{\s*(\w+(\.\w+)*)\s*}}/g,
+        (match, key) => {
+
+            if (key === "items") return itemsHtml;
+            if (key === "actions") return actionHtml;
+
+            return key
+                .split(".")
+                .reduce((obj, prop) => obj && obj[prop], data) || "";
         }
+    );
 
-        const normalizeDate = (date) => {
-            const d = new Date(date);
-            return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-        };
-
-        const start = normalizeDate(startDate);
-        const end = normalizeDate(endDate);
-
-        if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
-            throw new Error("Invalid date range. Ensure startDate and endDate are valid and startDate is before endDate.");
-        }
-
-        const timeDiff = end.getTime() - start.getTime();
-        const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-        let subTotal = 0;
-
-        if (invoicePerVolume) {
-            switch (periodType.toLowerCase()) {
-                case "daily":
-                    subTotal = price * daysDiff * volume; // Total days multiplied by daily price
-                    break;
-                case "weekly":
-                    const weeks = daysDiff / 7; // Total weeks (days divided by 7)
-                    subTotal = price * weeks * volume;
-                    break;
-                case "monthly":
-                    const months = daysDiff / 30; // Approximate months (days divided by 30)
-                    subTotal = price * months * volume;
-                    break;
-                case "quarter":
-                    const quarters = daysDiff / 90; // Approximate quarters (days divided by 90)
-                    subTotal = price * quarters * volume;
-                    break;
-                case "annually":
-                    const years = daysDiff / 365; // Approximate years (days divided by 365)
-                    subTotal = price * years * volume;
-                    break;
-                default:
-                    throw new Error("Invalid period type. Accepted values are 'daily', 'weekly', 'monthly', 'quarter', 'annually'.");
-            }
-
-        } else {
-            switch (periodType.toLowerCase()) {
-                case "daily":
-                    subTotal = price * daysDiff; // Total days multiplied by daily price
-                    break;
-                case "weekly":
-                    const weeks = daysDiff / 7; // Total weeks (days divided by 7)
-                    subTotal = price * weeks;
-                    break;
-                case "monthly":
-                    const months = daysDiff / 30; // Approximate months (days divided by 30)
-                    subTotal = price * months;
-                    break;
-                case "quarter":
-                    const quarters = daysDiff / 90; // Approximate quarters (days divided by 90)
-                    subTotal = price * quarters;
-                    break;
-                case "annually":
-                    const years = daysDiff / 365; // Approximate years (days divided by 365)
-                    subTotal = price * years;
-                    break;
-                default:
-                    throw new Error("Invalid period type. Accepted values are 'daily', 'weekly', 'monthly', 'quarter', 'annually'.");
-            }
-        }
-        return parseFloat(subTotal.toFixed(2)); // Return subtotal rounded to 2 decimal places
+    const options = {
+        format: "A4",
+        border: {
+            top: "15mm",
+            right: "15mm",
+            bottom: "15mm",
+            left: "15mm",
+        },
     };
 
-    const subTotal = calculateSubTotal(data.storage?.price, data.storage?.invoicingStartDate, data.lastInvoiceDate, data.storage?.invoicingPeriod, data.storage?.invoicePerVolume, data.storage?.totalVolume);
-
-    const populatedHtml = htmlContent.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-        if (key === 'items') {
-            return itemsHtml;
-        }
-        if (key === 'actions') {
-            return actionHtml;
-        }
-        if (key === 'subTotal') {
-            return subTotal.toFixed(2);
-        }
-        if (key === 'vat') {
-            return ((subTotal * data.storage?.vatPercentage) / 100).toFixed(2);
-        }
-        if (key === 'handlingCharges') {
-            return data.storage?.costAction.reduce((total, item) => total + ((item.price * item.quantity) || 0), 0);
-        }
-        if (key === 'totalCharges') {
-            return ((subTotal + (data.storage?.includingVat === 'Including VAT' ? ((subTotal * data.storage?.vatPercentage) / 100) : 0)) + data.storage?.costAction.reduce((total, item) => total + (item.price || 0), 0)).toFixed(2);
-        }
-        return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+    return new Promise((resolve, reject) => {
+        pdf.create(populatedHtml, options).toBuffer((err, buffer) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(buffer);
+            }
+        });
     });
-
-    // const browser = await puppeteer.launch({
-    //     executablePath: 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    //     headless: true
-    // });
-
-    const browser = await puppeteer.launch({
-        executablePath: await chromium.executablePath(),
-        args: chromium.args,
-        headless: chromium.headless,
-    });
-
-    const page = await browser.newPage();
-    await page.setContent(populatedHtml, { waitUntil: 'networkidle0' });
-
-    const pdfBuffer = await page.pdf({
-        printBackground: true,
-        margin: {
-            top: '15mm',     // Top padding
-            right: '15mm',   // Right padding
-            bottom: '15mm',  // Bottom padding
-            left: '15mm',    // Left padding
-        },
-    });
-    await browser.close();
-    return pdfBuffer;
 }

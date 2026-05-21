@@ -3,7 +3,7 @@ const FurnitureType = require("../../models/Valuation/furnitureTypeModel");
 // Get all furniture types
 exports.getAllFurnitureTypes = async (req, res) => {
     try {
-        const furnitureTypes = await FurnitureType.find();
+        const furnitureTypes = await FurnitureType.find().sort({ furnitureTypeName: 1 }); // Sort by furnitureTypeName
         res.status(200).json(furnitureTypes);
     } catch (error) {
         res.status(500).json({ error: error.message });

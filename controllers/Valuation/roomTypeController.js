@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 // Get all room types
 exports.getAllRoomTypes = async (req, res) => {
     try {
-        const roomTypes = await RoomType.find() .populate('furnitureType') // Populate furnitureType
+       // const roomTypes = await RoomType.find().populate('furnitureType').sort({ roomTypeName: 1 });
+        const roomTypes = await RoomType.find().populate({path: 'furnitureType',options: {sort: { furnitureTypeName: 1 } }}).sort({ roomTypeName: 1 }); // sort room types// Populate furnitureType and sort by roomTypeName
         res.status(200).json(roomTypes);
     } catch (error) {
         res.status(500).json({ error: error.message });

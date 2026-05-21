@@ -3,7 +3,7 @@ const ServiceType = require('../../models/Valuation/serviceTypeModel');
 // Get all service types
 exports.getAllServiceTypes = async (req, res) => {
     try {
-        const serviceTypes = await ServiceType.find();
+        const serviceTypes = await ServiceType.find().sort({ serviceTypeName: 1 }); // Sort by serviceTypeName
         res.status(200).json(serviceTypes);
     } catch (error) {
         res.status(500).json({ error: error.message });

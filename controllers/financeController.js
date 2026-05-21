@@ -168,65 +168,88 @@ exports.DownloadInvoicePDF = async (req, res) => {
   }
 };
 
+const pdf = require("html-pdf");
+
 async function generatePdf(htmlContent, data) {
+  const itemsHtml = `
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th style="padding: 15px 0; width: 60%;">Description</th>
+          <th style="padding: 15px 0; width: 10%;">Quantity</th>
+          <th style="padding: 15px 0; width: 10%;">Price</th>
+          <th style="padding: 15px 0; width: 10%;">Total</th>
+          <th style="padding: 15px 0; width: 10%;">BTW (%)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.invoice.items
+          .map(
+            (item) => `
+          <tr>
+            <td style="padding:15px 0">
+              ${item.description}
+            </td>
 
-  const itemsHtml = `<table style="width: 100%; border-collapse: collapse;">
-  <thead>
-    <tr>
-      <th style="padding: 15px 0; width: 60%;">Description</th>
-      <th style="padding: 15px 0; width: 10%;">Quantity</th>
-      <th style="padding: 15px 0; width: 10%;">Price</th>
-      <th style="padding: 15px 0; width: 10%;">Total</th>
-      <th style="padding: 15px 0; width: 10%;">BTW (%)</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${data.invoice.items.map(item => `
-      <tr>
-        <td style='padding:15px 0'>${item.description}</td>
-        <td style='padding:15px 0'>${item.quantity}</td>
-        <td style='padding:15px 0'>${(item.price).toFixed(2)} $</td>
-        <td style='padding:15px 0'>${(item.quantity * item.price).toFixed(2)} $</td>
-        <td style="padding: 15px 0;">${(item.btw)}%</td>
-      </tr>
-    `).join('')}
-  </tbody>
-</table>`;
+            <td style="padding:15px 0">
+              ${item.quantity}
+            </td>
 
-  const populatedHtml = htmlContent.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-    if (key === 'items') {
-      return itemsHtml;
+            <td style="padding:15px 0">
+              ${(item.price).toFixed(2)} $
+            </td>
+
+            <td style="padding:15px 0">
+              ${(item.quantity * item.price).toFixed(2)} $
+            </td>
+
+            <td style="padding:15px 0">
+              ${item.btw}%
+            </td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+console.log("htmlContent:", htmlContent);
+console.log("data:", data);
+  const populatedHtml = htmlContent.replace(
+    /{{\s*(\w+(\.\w+)*)\s*}}/g,
+    (match, key) => {
+      if (key === "items") {
+        return itemsHtml;
+      }
+
+      return (
+        key
+          .split(".")
+          .reduce((obj, prop) => obj && obj[prop], data) || ""
+      );
     }
-    return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
-  });
+  );
 
-  const browser = await puppeteer.launch({
-    executablePath: await chromium.executablePath(),
-    args: chromium.args,
-    headless: chromium.headless,
-  });
-
-  // const browser = await puppeteer.launch({
-  //   executablePath: 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  //   headless: true
-  // });
-
-  const page = await browser.newPage();
-  await page.setContent(populatedHtml, { waitUntil: 'networkidle0' });
-
-  const pdfBuffer = await page.pdf({
-    format: 'A4',
-    printBackground: true,
-    margin: {
-      top: '15mm',
-      right: '7mm',
-      bottom: '15mm',
-      left: '7mm',
+  const options = {
+    format: "A4",
+    border: {
+      top: "15mm",
+      right: "7mm",
+      bottom: "15mm",
+      left: "7mm",
     },
-  });
+    timeout: 30000,
+  };
 
-  await browser.close();
-  return pdfBuffer;
+  return new Promise((resolve, reject) => {
+    pdf.create(populatedHtml, options).toBuffer((err, buffer) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(buffer);
+      }
+    });
+  });
 }
 
 exports.createInvoicePDF = async (req, res) => {
