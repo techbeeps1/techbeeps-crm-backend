@@ -67,7 +67,7 @@ exports.financeList = async (req, res) => {
     const filter = {};
     if (job) filter.job = job;
     if (customer) filter.customer = customer;
-    const financeList = await Finance.find(filter).populate('customer', 'firstName lastName').populate('contactPerson', 'username')
+    const financeList = await Finance.find(filter).sort({ createdAt: -1 }).populate('customer', 'firstName lastName').populate('contactPerson', 'username');
     res.json({
       financeData: financeList,
     });
@@ -213,8 +213,7 @@ async function generatePdf(htmlContent, data) {
       </tbody>
     </table>
   `;
-console.log("htmlContent:", htmlContent);
-console.log("data:", data);
+
   const populatedHtml = htmlContent.replace(
     /{{\s*(\w+(\.\w+)*)\s*}}/g,
     (match, key) => {

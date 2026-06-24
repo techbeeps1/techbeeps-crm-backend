@@ -21,7 +21,7 @@ exports.getSalesGroups = async (req, res) => {
     try {
         const { type } = req.query; // Extract 'type' from query parameters
         const filter = type ? { type } : {};
-        const salesGroups = await SalesGroup.find(filter).sort();
+        const salesGroups = await SalesGroup.find(filter).sort({name: 1}); // Sort by name in ascending order
         res.status(200).json(salesGroups);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching sales groups', error });

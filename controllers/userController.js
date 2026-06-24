@@ -3,7 +3,7 @@ require('dotenv').config();
 const User = require('../models/user');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-
+const Otp = require('../models/otpModel');
 const registerUser = async (req, res) => {
   const { username, email, password, role } = req.body;  // Role can be passed in the request body
   try {
@@ -95,19 +95,23 @@ const DeleteUser = async (req, res) => {
 };
 
 const ResetPassword = async (req, res) => {
-  const { email, oldPassword, newPassword } = req.body;
-  if (!email || !oldPassword || !newPassword) {
-    return res.status(400).json({ msg: 'Email, old password, and new password are required' });
+  const { email, otp, newPassword } = req.body;
+
+  if (!email || !otp || !newPassword) {
+    return res.status(400).json({ msg: 'Email, OTP, and new password are required' });
   }
   try {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ msg: 'User not found' });
     }
-    const isMatch = await bcrypt.compare(oldPassword, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Old password is incorrect' });
-    }
+      const record = await Otp.findOne({ email, otp });
+        if (record) {
+            await Otp.deleteOne({ email }); // OTP can only be used once
+        } else {
+            return res.status(400).json({ msg: 'Invalid or expired OTP' });
+        }
+
     const salt = await bcrypt.genSalt(10);
     const hashedNewPassword = await bcrypt.hash(newPassword, salt);
     user.password = hashedNewPassword;

@@ -3,12 +3,20 @@ const Address = require('../models/addressModel')
 
 exports.customer = async (req, res) => {
   try {
+    // check customer exist or not
+
+    const existingCustomer = await Customer.findOne({ email: req.body.email });
+    if (existingCustomer) {
+      return res.status(400).json({ error: 'Customer with this email already exists' });
+    }else {
+
     const newAddress = new Address(req.body?.head);
     const savedAddress = await newAddress.save();
     const customerData = { ...req.body, address: savedAddress._id }; // Add the address ID to the customer data
     const newCustomer = new Customer(customerData);
     await newCustomer.save();
-    res.status(200).json({ message: 'customer created' });
+    res.status(200).json({ message: 'customer created', customerID: newCustomer._id });
+    }
   } catch (error) {
     res.status(400).json({ error: error.message });
     console.log(error)
@@ -205,19 +213,21 @@ exports.mergeCustomer = async (req, res) => {
 
     // Check if both customers exist
     if (!originalCustomer || !selectedCustomer) {
-      return res.status(404).json({ message: 'One or both customers not found' });
+      return res.status(404).json({ success: false, message: 'User ID is invalid or not foun' });
     }
 
     // Merge the address from the selected customer into the original customer
-    originalCustomer.city = selectedCustomer.city; // Assuming 'address' is a property of the Customer schema
+    // work is pending for merging other fields all 
+    originalCustomer.address = selectedCustomer.address; // Assuming 'address' is a property of the Customer schema
 
     // Save the updated customer data
     const updatedCustomer = await originalCustomer.save();
 
-    res.status(200).json({ message: 'Customer data merged successfully', data: updatedCustomer });
+    res.status(200).json({ success: true, message: 'Customer data merged successfully', data: updatedCustomer });
   } catch (error) {
+    
     console.error('Error merging customers:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({ success: false, message: 'User ID is invalid or not found' });
   }
 };
 
