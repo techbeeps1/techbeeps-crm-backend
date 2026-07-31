@@ -21,6 +21,7 @@ exports.valuationMaster = async (req, res) => {
       jobId,
       signWithCustomer,
       sendImmediately,
+      services
     } = req.body;
     let job;
 
@@ -77,7 +78,7 @@ exports.valuationMaster = async (req, res) => {
       return res.status(404).json({ message: "Package not found" });
     }
 
-    // 4️⃣ **Handle Offers (Array of Offers)**
+    // 4️⃣ **Handle Offers (Array of Offers)** update  or create
     let finance;
     if (offer?._id) {
       finance = await Finance.findByIdAndUpdate(
@@ -143,10 +144,16 @@ exports.valuationMaster = async (req, res) => {
     job.knownAddress = knownAddress ?? job.knownAddress;
     job.relocation = relocationDetails;
     job.materials = materialData;
+    job.services = services || job.services;
     job.offer = finance._id;
 
     // 9️⃣ **Save Valuation Rooms**
     try {
+
+      await ValuationRooms.deleteMany({
+            jobId: job._id,
+         });
+
       if (valuationRoomsData.length) {
         await ValuationRooms.insertMany(valuationRoomsData, { ordered: false });
       }

@@ -2,8 +2,9 @@ const JobSchedule = require("../models/jobSchedule");
 const { ObjectId } = require("mongodb");
 const Customer = require("../models/customer");
 const notes = require("../models/job/notes");
-const FinancialProcess = require("../models/job/financialProcess");
+//const FinancialProcess = require("../models/job/financialProcess");
 const Package = require('../models/PackageModel')
+const ValuationRooms = require("../models/Valuation/valuationRoomDetail");
 
 exports.jobSchedule = async (req, res) => {
   try {
@@ -236,37 +237,37 @@ exports.updateJobNotes = async (req, res) => {
   }
 };
 
-exports.updateFinancialProcess = async (req, res) => {
-  try {
-    const checkId = await FinancialProcess.findById({ _id: req.body._id });
-    if (checkId) {
-      const editdata = await FinancialProcess.findByIdAndUpdate(req.body._id, req.body, {
-        new: true,
-      });
-      if (editdata) {
-        res.status(200).send({
-          msg: "edited data Successfully",
-          data: editdata,
-        });
-      }
-    }
-  } catch (err) {
-    console.log(err);
-  }
-};
+// exports.updateFinancialProcess = async (req, res) => {
+//   try {
+//     const checkId = await FinancialProcess.findById({ _id: req.body._id });
+//     if (checkId) {
+//       const editdata = await FinancialProcess.findByIdAndUpdate(req.body._id, req.body, {
+//         new: true,
+//       });
+//       if (editdata) {
+//         res.status(200).send({
+//           msg: "edited data Successfully",
+//           data: editdata,
+//         });
+//       }
+//     }
+//   } catch (err) {
+//     console.log(err);
+//   }
+// };
 
-exports.financialProcessListByJobId = async (req, res) => {
-  try {
-    const jobId = new ObjectId(req.query.jobId);
-    const financialProcessListByJobId = await FinancialProcess.find({ jobId: jobId });
-    res.json({
-      financialProcessListByJobId: financialProcessListByJobId,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+// exports.financialProcessListByJobId = async (req, res) => {
+//   try {
+//     const jobId = new ObjectId(req.query.jobId);
+//     const financialProcessListByJobId = await FinancialProcess.find({ jobId: jobId });
+//     res.json({
+//       financialProcessListByJobId: financialProcessListByJobId,
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
 exports.getJobScheduleById = async (req, res) => {
   try {
@@ -283,10 +284,22 @@ exports.getJobScheduleById = async (req, res) => {
         path: 'material',
         select: 'name'
       }
-    });
+    }).lean();;
+  
     if (!jobSchedule) {
       return res.status(404).json({ message: 'Job schedule not found' });
     }
+    const rooms = await ValuationRooms.find({ jobId: id })
+  .select("roomId roomTypeName name furnitureType inventoryItems assembledItems dismantledItems storageItems")
+  .lean();
+
+const data = rooms.map(({ roomId, _id , ...rest }) => ({
+  _id: roomId,
+  ...rest,
+}));
+      jobSchedule.rooms = data;
+    
+
     res.status(200).json(jobSchedule);
   } catch (error) {
     res.status(500).json({ message: 'Failed to retrieve job schedule', error: error.message });

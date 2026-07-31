@@ -50,19 +50,18 @@ exports.addAddressToCustomer = async (req, res) => {
 
 exports.getHeadAddress = async (req, res) => {
   try {
-    const { addressArray } = req.body;
-    if (!Array.isArray(addressArray) || addressArray.length === 0) {
-      return res.status(400).json({ error: 'A non-empty address array is required' });
+    const { Id } = req.params;
+ 
+    const addresses = await Address.find({ _id: Id });
+  if (!addresses || addresses.length === 0) {
+      return res.status(404).json({ success: false, error: 'Head address not found' });
     }
-    const addresses = await Address.find({ _id: { $in: addressArray } });
-    const headAddress = addresses.find((addr) => addr.addressType === 'head');
-    if (!headAddress) {
-      return res.status(404).json({ error: 'No address with type "head" found' });
-    }
-    res.status(200).json(headAddress);
+    res.status(200).json({success: true, address: addresses[0] });
+
+
   } catch (error) {
-    console.error('Error retrieving head address:', error);
-    res.status(500).json({ error: 'Failed to retrieve head address' });
+   
+    res.status(500).json({ error: 'Failed to retrieve head address', error: error.message });
   }
 };
 

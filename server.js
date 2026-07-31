@@ -42,7 +42,7 @@ const emailRoutes = require("./routes/emailRoutes");
 const userRoutes = require("./routes/userRoutes");
 const leadRoutes = require("./routes/leadRoutes");
 const customerRoutes = require("./routes/customerRoutes");
-const chatRoutes = require("./routes/chatRoutes");
+//const chatRoutes = require("./routes/chatRoutes");
 const financeRoutes = require("./routes/financeRoutes");
 const invoiceRoutes = require("./routes/invoiceRoutes");
 const uploadDocumentRoutes = require("./routes/uploadDocumentRoutes");
@@ -61,7 +61,7 @@ const vehicleRoutes = require("./routes/Resources/vehicleRoutes");
 const storageLoactionRoutes = require("./routes/Resources/storageLoactionRoutes");
 const storageRoutes = require("./routes/Resources/stroageRoutes");
 
-const quoteRoutes = require("./routes/FinanceInvoice/quoteRoutes");
+//const quoteRoutes = require("./routes/FinanceInvoice/quoteRoutes");
 const newsItemsRoutes = require("./routes/Communication/newsItemsRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const companyRoutes = require("./routes/companyRoutes");
@@ -74,7 +74,7 @@ const appointmentRoutes = require("./routes/appointmentRoutes")
 const activityRoutes = require("./routes/activityRoutes");
 const appSettingsRoutes = require("./routes/appSettingRoutes")
 const valuationRoutes = require('./routes/Valuation/valuationRoutes');
-const iconRoutes = require('./routes/Valuation/iconRoutes');
+//const iconRoutes = require('./routes/Valuation/iconRoutes');
 
 server.get("/", (req, res) => {
   res.send("Updated CRM backend is running on vercel");
@@ -82,7 +82,7 @@ server.get("/", (req, res) => {
 
 // valuation routes 
 server.use("/api", valuationRoutes);
-server.use('/api/icons', iconRoutes);
+//server.use('/api/icons', iconRoutes);
 
 server.use("/api", documentTemplateRoutes);
 
@@ -107,7 +107,7 @@ server.use("/api/activities", activityRoutes);
 server.use("/api", teamRoutes);
 server.use("/api/input", dynamicInputController);
 
-server.use("/quote", quoteRoutes);
+//server.use("/quote", quoteRoutes);
 server.use("/finance", financeRoutes);
 server.use("/leads", leadRoutes);
 
@@ -128,7 +128,7 @@ server.use("/api", vehicleRoutes);
 server.use("/api", storageLoactionRoutes);
 server.use("/api", storageRoutes);
 
-server.use("/api", staffRoutes);
+//server.use("/api", staffRoutes);
 server.use('/Communication', newsItemsRoutes);
 
 

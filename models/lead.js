@@ -2,28 +2,41 @@ const mongoose = require('mongoose');
 
 const leadSchema = new mongoose.Schema({
     typeOfCustomer:String,
-    salutation:String,
     firstName:String,
     lastName:String,
     gender:String,
     email:String,
     contact:Number,
     findUs:String,
-    time:String,
-    date:String,
-    from:String,
-    to:String,
-    whereOption:String,
-    distance:String,
-    floor:Number,
-    reports:String,
-    permission:String,
-    simage:String,
-    lift:String,
-    selectedRadio:String,
-    internetLink:String,
-    additionalDetail:String,
-    selectedFile:String
+    city:String,
+    postcode:String,
+    taal:String,
+    status:{
+        type: String,
+        default: 'New',
+    },
+    leadIndex: {
+        type: Number,
+        index: true,
+      },
+    
+   
 });
+
+leadSchema.pre('save', async function (next) {
+    if (this.isNew) {
+      try {
+        const lastLead = await this.constructor
+          .findOne()
+          .sort({ leadIndex: -1 });
+        this.leadIndex = lastLead ? lastLead.leadIndex + 1 : 1;
+        next();
+      } catch (error) {
+        next(error);
+      }
+    } else {
+      next();
+    }
+  });
 
 module.exports = mongoose.model('Lead', leadSchema);

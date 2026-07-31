@@ -8,7 +8,7 @@ router.get('/customerList', customerController.customerList);
 router.post('/customer/address', customerController.addAddressToCustomer);
 router.post('/update_address', customerController.updateAddress);
 router.post('/delete_address', customerController.deleteAddress);
-router.post('/head_address', customerController.getHeadAddress);
+router.get('/address/:Id', customerController.getHeadAddress);
 
 router.post('/customerdetial', customerController.CustomerDetail)
 router.delete('/deleteCustomer/:customerId', customerController.deleteCustomer);

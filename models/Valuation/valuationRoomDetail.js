@@ -22,6 +22,7 @@ const roomTypeSchema = new Schema({
         type:mongoose.Schema.Types.ObjectId,
         ref: 'jobSchedule',
     },
+    roomId:String,
     roomTypeName: {
         type: String,
     },
@@ -36,18 +37,29 @@ const roomTypeSchema = new Schema({
         {
             name: { type: String },
             quantity: { type: Number },
+            price: { type: Number },
+            cubicMeter: { type: Number },
+            
         }
     ],
     assembledItems: [
         {
             furnitureTypeName: { type: String },
-            cubicMeter: { type: Number }
+            cubicMeter: { type: Number },
+            isDisassambled:Boolean,
+            _id:String,
+            checked:Boolean,
+
         }
+
     ],
     dismantledItems: [
         {
             furnitureTypeName: { type: String },
-            cubicMeter: { type: Number }
+            cubicMeter: { type: Number },
+             isDisassambled:Boolean,
+            _id:String,
+            checked:Boolean,
         }
     ],
     storageItems: [

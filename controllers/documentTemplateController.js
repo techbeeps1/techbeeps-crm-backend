@@ -1,5 +1,7 @@
 const DocumentTemplate = require('../models/documentTemplateModel');
+const Inputs = require('../models/dynamicInputModel');
 
+const mongoose = require('mongoose');
 const designData = {
     body: {
         "rows": [
@@ -569,14 +571,36 @@ exports.createDocumentTemplate = async (req, res) => {
 exports.getDocumentTemplates = async (req, res) => {
     const { type } = req.query;
     const filter = {};
-    if (type) {
-        filter.documentType = type;
-    }
+
     try {
-        const templates = await DocumentTemplate.find(filter).select('name _id documentType templateType expiryPeriod');
+
+        // Inputs se IDs nikalo
+        const inputIds = await Inputs.distinct("name");
+
+        // Valid ObjectId banao
+        const objectIds = inputIds
+            .filter(id => mongoose.Types.ObjectId.isValid(id))
+            .map(id => new mongoose.Types.ObjectId(id));
+
+        // Document Type filter
+        if (type) {
+            filter.documentType = type;
+            filter._id = { $in: objectIds };
+        }
+
+        // Sirf wahi templates jinki ID Inputs.name me hai
+
+
+        const templates = await DocumentTemplate.find(filter)
+            .select("name _id documentType templateType expiryPeriod");
+
         res.status(200).json(templates);
+
     } catch (error) {
-        res.status(500).json({ message: 'Error fetching document templates', error });
+        res.status(500).json({
+            message: "Error fetching document templates",
+            error: error.message
+        });
     }
 };
 

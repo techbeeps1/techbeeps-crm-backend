@@ -61,6 +61,7 @@ const jodScheduleSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now },
   load: { type: addressSchema },
   unload: { type: addressSchema },
+  services: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ServiceType' }],
   knownAddress: { type: Boolean, default: false },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
   package: { type: mongoose.Schema.Types.ObjectId, ref: 'package' },

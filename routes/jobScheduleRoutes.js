@@ -17,9 +17,9 @@ router.post('/jobNotes', jobScheduleController.jobNotes);
 router.get('/notesListByJobId', jobScheduleController.notesListByJobId);
 
 router.put('/updateJobNotes/:notesId', jobScheduleController.updateJobNotes);
-router.get('/financialProcessListByJobId', jobScheduleController.financialProcessListByJobId);
-router.put('/updateFinancialProcess/:id', jobScheduleController.updateFinancialProcess);
-router.post('/jobs/sendQuoteToCustomer', sendQuoteToCustomerController.sendQuoteToCustomer);
+//router.get('/financialProcessListByJobId', jobScheduleController.financialProcessListByJobId);
+//router.put('/updateFinancialProcess/:id', jobScheduleController.updateFinancialProcess);
+//router.post('/jobs/sendQuoteToCustomer', sendQuoteToCustomerController.sendQuoteToCustomer);
 
 
 module.exports = router;
