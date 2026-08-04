@@ -75,6 +75,8 @@ const activityRoutes = require("./routes/activityRoutes");
 const appSettingsRoutes = require("./routes/appSettingRoutes")
 const valuationRoutes = require('./routes/Valuation/valuationRoutes');
 //const iconRoutes = require('./routes/Valuation/iconRoutes');
+const employabilityRoutes = require("./routes/employabilityRoutes");
+
 
 server.get("/", (req, res) => {
   res.send("Updated CRM backend is running on vercel");
@@ -103,6 +105,8 @@ server.use('/api/packages', packageRoutes);
 server.use("/api/sale_group", salesGroupRoutes);
 
 server.use('/api/appointment', appointmentRoutes);
+server.use('/api/employability', employabilityRoutes);
+
 server.use("/api/activities", activityRoutes);
 server.use("/api", teamRoutes);
 server.use("/api/input", dynamicInputController);
@@ -128,8 +132,16 @@ server.use("/api", vehicleRoutes);
 server.use("/api", storageLoactionRoutes);
 server.use("/api", storageRoutes);
 
+
 //server.use("/api", staffRoutes);
 server.use('/Communication', newsItemsRoutes);
+
+const dns = require('dns');
+
+dns.setServers([
+  '8.8.8.8',
+  '8.8.4.4'
+]);
 
 
 async function connectToMongoDB() {
@@ -139,8 +151,8 @@ async function connectToMongoDB() {
       throw new Error('MONGO_URI is not defined in environment variables');
     }
     await mongoose.connect(mongoURI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      // useNewUrlParser: true,
+      // useUnifiedTopology: true,
       retryWrites: true,
       serverSelectionTimeoutMS: 10000, // Increase timeout for server selection
       socketTimeoutMS: 45000, // Increase socket timeout

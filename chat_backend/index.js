@@ -24,11 +24,17 @@ if (!mongoUrl) {
 
 mongoose.set('strictQuery', false);
 
+const dns = require('dns');
+
+dns.setServers([
+  '8.8.8.8',
+  '8.8.4.4'
+]);
 async function connectToDatabase() {
   try {
     await mongoose.connect(mongoUrl, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      // useNewUrlParser: true,
+      // useUnifiedTopology: true,
       retryWrites: true,
       serverSelectionTimeoutMS: 10000, // Increase timeout for server selection
       socketTimeoutMS: 45000, // Increase socket timeout
