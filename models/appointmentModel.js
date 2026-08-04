@@ -17,25 +17,20 @@ const appointmentSchema = new mongoose.Schema({
     appointmentType: {
         type: String
     },
-    departureTime: {
-        type: Date,
-    },
-    arrivalTime: {
-        type: Date,
-    },
-    workLocation: {
-        type: String,
-    },
     departureLocation: {
         type: String,
+    },
+
+    assignedEmployees: {
+        type: [String],
+    },
+    selectedLifts: {
+        type: [String],
     },
     notes: {
         type: String,
     },
-    additionalFields: {
-        type: Map,
-        of: mongoose.Schema.Types.Mixed,
-    },
+
 }, {
     timestamps: true,
 });
