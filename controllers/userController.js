@@ -1,15 +1,17 @@
+require("dotenv").config();
+const User = require("../models/user");
+const Employability = require("../models/employabilityModel");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const Otp = require("../models/otpModel");
+const Vehicle = require('../models/Resources/vehicle');
 
-require('dotenv').config();
-const User = require('../models/user');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const Otp = require('../models/otpModel');
 const registerUser = async (req, res) => {
-  const { username, email, password, role } = req.body;  // Role can be passed in the request body
+  const { username, email, password, role } = req.body; // Role can be passed in the request body
   try {
     let user = await User.findOne({ email });
     if (user) {
-      return res.status(400).json({ msg: 'User already exists' });
+      return res.status(400).json({ msg: "User already exists" });
     }
     const bcryptSalt = bcrypt.genSaltSync(10);
     const hashedPassword = await bcrypt.hash(password, bcryptSalt);
@@ -18,10 +20,23 @@ const registerUser = async (req, res) => {
       password: hashedPassword,
     });
     await user.save();
-    const token = jwt.sign({ userId: user._id, username: user.username, role: user.role }, process.env.JWT_SECRET);
-    return res.status(201).json({ token, user: { id: user._id, username: user.username, email: user.email, role: user.role } });
+    const token = jwt.sign(
+      { userId: user._id, username: user.username, role: user.role },
+      process.env.JWT_SECRET,
+    );
+    return res
+      .status(201)
+      .json({
+        token,
+        user: {
+          id: user._id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+        },
+      });
   } catch (err) {
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -30,16 +45,24 @@ const loginUser = async (req, res) => {
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
+      return res.status(400).json({ msg: "Invalid credentials" });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
+      return res.status(400).json({ msg: "Invalid credentials" });
     }
-    const token = jwt.sign({ userId: user._id, username: user.username, role: user.role }, process.env.JWT_SECRET);
-    return res.status(200).json({ token, user: { id: user._id, name: user.username, email: user.email } });
+    const token = jwt.sign(
+      { userId: user._id, username: user.username, role: user.role },
+      process.env.JWT_SECRET,
+    );
+    return res
+      .status(200)
+      .json({
+        token,
+        user: { id: user._id, name: user.username, email: user.email },
+      });
   } catch (err) {
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -48,19 +71,19 @@ const ProfileUser = async (req, res) => {
   try {
     const user = await User.findById(userId); // Use findById to get user by userId
     if (!user) {
-      return res.status(404).json({ msg: 'User not found' }); // Use 404 for not found
+      return res.status(404).json({ msg: "User not found" }); // Use 404 for not found
     }
     return res.status(200).json({
       user: {
         userId: user._id,
         username: user.username,
         email: user.email,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
   } catch (err) {
     console.error(err); // Log the error for debugging
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -68,29 +91,151 @@ const Allusers = async (req, res) => {
   try {
     const users = await User.find({});
     if (!users) {
-      return res.status(404).json({ msg: 'Users not found' });
+      return res.status(404).json({ msg: "Users not found" });
     }
     return res.status(200).json(users);
   } catch (err) {
     console.error(err); // Log the error for debugging
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
+  }
+};
+
+function getFreeSlots(jobStart, jobEnd, bookings) {
+  const freeSlots = [];
+
+  // Sort bookings by start time
+  bookings.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+  let current = new Date(jobStart);
+
+  for (const booking of bookings) {
+    const start = new Date(booking.startTime);
+    const end = new Date(booking.endTime);
+
+    // Ignore booking outside job timing
+    if (end <= jobStart || start >= jobEnd) continue;
+
+    const bookingStart = start < jobStart ? jobStart : start;
+    const bookingEnd = end > jobEnd ? jobEnd : end;
+
+    // Gap found
+    if (bookingStart > current) {
+      freeSlots.push({
+        start: new Date(current),
+        end: new Date(bookingStart),
+      });
+    }
+
+    if (bookingEnd > current) {
+      current = bookingEnd;
+    }
+  }
+
+  // Last gap
+  if (current < jobEnd) {
+    freeSlots.push({
+      start: new Date(current),
+      end: new Date(jobEnd),
+    });
+  }
+
+  return freeSlots;
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+const Allemployees = async (req, res) => {
+  try {
+    const { date } = req.params;
+
+    const jobStart = new Date(`${date}T11:00:00`);
+    const jobEnd = new Date(`${date}T19:00:00`);
+
+    const users = await User.find(
+      {},
+      {
+        username: 1,
+        role: 1,
+        skills: 1,
+      }
+    );
+
+    const result = await Promise.all(
+      users.map(async (user) => {
+        const bookings = await Employability.find({
+          employeeId: user._id,
+          startTime: { $lt: jobEnd },
+          endTime: { $gt: jobStart },
+        }).sort({ startTime: 1 });
+
+        const freeSlots = getFreeSlots(jobStart, jobEnd, bookings);
+  
+        return {
+          _id: user._id,
+          username: user.username,
+          role: user.role,
+          skills: user.skills,
+          available: freeSlots.length > 0,
+          freeSlots: freeSlots.map((slot) => ({
+            start: formatTime(slot.start),
+            end: formatTime(slot.end),
+          })),
+        };
+      })
+    );
+
+       const assignedVehicles = await Employability.find(
+  {
+    startTime: { $lt: jobEnd },
+    endTime: { $gt: jobStart },
+    vehicle: { $ne: null },
+  },
+  { vehicle: 1 }
+);
+
+const assignedVehicleIds = assignedVehicles
+  .map(item => item.vehicle)
+  .filter(Boolean);
+
+// Only available vehicles
+const vehicles = await Vehicle.find(
+  {
+    _id: { $nin: assignedVehicleIds },
+  },
+  {
+    name: 1,
+    licensePlate: 1,
+    vehicleType: 1,
+    model: 1,
+  }
+);
+
+    res.json({ employees: result, vehicles });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ msg: "Server Error" });
   }
 };
 
 const DeleteUser = async (req, res) => {
   const { id } = req.body; // Extract the user ID from the request body
   if (!id) {
-    return res.status(400).json({ msg: 'User ID is required' }); // Handle missing ID
+    return res.status(400).json({ msg: "User ID is required" }); // Handle missing ID
   }
   try {
     const user = await User.findByIdAndDelete(id);
     if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
+      return res.status(404).json({ msg: "User not found" });
     }
-    return res.status(200).json({ msg: 'User deleted successfully', user });
+    return res.status(200).json({ msg: "User deleted successfully", user });
   } catch (err) {
     console.error(err); // Log the error for debugging
-    return res.status(500).json({ msg: 'Server error' }); // Handle server errors
+    return res.status(500).json({ msg: "Server error" }); // Handle server errors
   }
 };
 
@@ -98,28 +243,30 @@ const ResetPassword = async (req, res) => {
   const { email, otp, newPassword } = req.body;
 
   if (!email || !otp || !newPassword) {
-    return res.status(400).json({ msg: 'Email, OTP, and new password are required' });
+    return res
+      .status(400)
+      .json({ msg: "Email, OTP, and new password are required" });
   }
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
+      return res.status(404).json({ msg: "User not found" });
     }
-      const record = await Otp.findOne({ email, otp });
-        if (record) {
-            await Otp.deleteOne({ email }); // OTP can only be used once
-        } else {
-            return res.status(400).json({ msg: 'Invalid or expired OTP' });
-        }
+    const record = await Otp.findOne({ email, otp });
+    if (record) {
+      await Otp.deleteOne({ email }); // OTP can only be used once
+    } else {
+      return res.status(400).json({ msg: "Invalid or expired OTP" });
+    }
 
     const salt = await bcrypt.genSalt(10);
     const hashedNewPassword = await bcrypt.hash(newPassword, salt);
     user.password = hashedNewPassword;
     await user.save();
-    return res.status(200).json({ msg: 'Password updated successfully' });
+    return res.status(200).json({ msg: "Password updated successfully" });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 const UpdateDetails = async (req, res) => {
@@ -128,15 +275,17 @@ const UpdateDetails = async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       id,
       { ...req.body },
-      { new: true, runValidators: true } // Options to return the updated document and run validation
+      { new: true, runValidators: true }, // Options to return the updated document and run validation
     );
     if (!updatedUser) {
-      return res.status(404).json({ msg: 'User not found.' });
+      return res.status(404).json({ msg: "User not found." });
     }
-    return res.status(200).json({ msg: 'Admin role assign successfully.', user: updatedUser });
+    return res
+      .status(200)
+      .json({ msg: "Admin role assign successfully.", user: updatedUser });
   } catch (err) {
     console.error(err); // Log the error for debugging
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 const MakeAdmin = async (req, res) => {
@@ -145,16 +294,28 @@ const MakeAdmin = async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       id,
       { role },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
     if (!updatedUser) {
-      return res.status(404).json({ msg: 'User not found.' });
+      return res.status(404).json({ msg: "User not found." });
     }
-    return res.status(200).json({ msg: 'Admin role assign successfully.', user: updatedUser });
+    return res
+      .status(200)
+      .json({ msg: "Admin role assign successfully.", user: updatedUser });
   } catch (err) {
     console.error(err); // Log the error for debugging
-    return res.status(500).json({ msg: 'Server error' });
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
-module.exports = { registerUser, loginUser, ProfileUser, Allusers, DeleteUser, ResetPassword, UpdateDetails, MakeAdmin };
+module.exports = {
+  registerUser,
+  loginUser,
+  ProfileUser,
+  Allusers,
+  DeleteUser,
+  ResetPassword,
+  UpdateDetails,
+  MakeAdmin,
+  Allemployees,
+};

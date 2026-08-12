@@ -7,16 +7,16 @@ const employabilitySchema = new mongoose.Schema({
     },
     employeeName: String,
     workType: String,
-    date: {
-        type: Date,
-    },
     startTime: {
         type: Date,
     },
     endTime: {
         type: Date,
     },
-    vehicle: String || null,
+    vehicle: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Vehicle',
+    },
 
     }, {
     timestamps: true,

@@ -1,38 +1,41 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const appointmentSchema = new mongoose.Schema({
-    jobId :{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'jobSchedule',
+const appointmentSchema = new mongoose.Schema(
+  {
+    jobId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "jobSchedule",
     },
     date: {
-        type: Date,
+      type: Date,
     },
     startTime: {
-        type: Date,
+      type: Date,
     },
     endTime: {
-        type: Date,
+      type: Date,
     },
     appointmentType: {
-        type: String
+      type: String,
     },
     departureLocation: {
-        type: String,
+      type: String,
     },
 
-    assignedEmployees: {
-        type: [String],
-    },
-    selectedLifts: {
-        type: [String],
-    },
+    assignedEmployees: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Employability",
+      },
+    ],
+  
     notes: {
-        type: String,
+      type: String,
     },
-
-}, {
+  },
+  {
     timestamps: true,
-});
+  },
+);
 
-module.exports = mongoose.model('Appointment', appointmentSchema);
+module.exports = mongoose.model("Appointment", appointmentSchema);

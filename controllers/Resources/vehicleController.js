@@ -14,7 +14,7 @@ exports.createVehicle = async (req, res) => {
 // Get all vehicles
 exports.getAllVehicles = async (req, res) => {
   try {
-    const vehicles = await Vehicle.find();
+    const vehicles = await Vehicle.find({},{name:1, licensePlate:1, vehicleType:1, model:1});
     res.status(200).json(vehicles);
   } catch (error) {
     res.status(500).json({ message: error.message });
