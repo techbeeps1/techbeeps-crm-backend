@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "start": "concurrently \"nodemon server.js\" \"nodemon ./chat_backend/index.js\"",
-    "test": "mocha",
-    "install": "npm install --arch=x64 --platform=linux puppeteer-core chrome-aws-lambda"
+    "test": "mocha"
+    
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
