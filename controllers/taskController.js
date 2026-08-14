@@ -6,12 +6,15 @@ const EmailTemplate = require('../models/reporting');
 // Create a new task
 // Create a transporter for Nodemailer
 const transporter = nodemailer.createTransport({
-    service: 'gmail',  // Or use any other service you prefer
-    auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-    },
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
 });
+
 
 exports.createTask = async (req, res) => {
     try {
@@ -38,7 +41,7 @@ exports.createTask = async (req, res) => {
                 return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
             });
             const mailOptions = {
-                from: process.env.GMAIL_USER, // Sender email address
+                from: process.env.SMTP_USER, // Sender email address
                 to: user.email,  // Send to each user's email
                 subject: `New Task Assigned to ${user.username}`,
                 html: userEmailHtml  // Send the HTML content as the email body

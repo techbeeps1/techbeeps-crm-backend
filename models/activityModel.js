@@ -19,7 +19,7 @@ const activitySchema = new mongoose.Schema(
         },
         sender:{
             type: String,
-            default: process.env.GMAIL_USER
+            default: process.env.SMTP_USER
         },
         offer: {
             type: mongoose.Schema.Types.ObjectId,

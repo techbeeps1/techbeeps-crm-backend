@@ -2,11 +2,11 @@ const Storage = require('../../models/Resources/storageModel');
 const CompanyDetails = require("../../models/companyModel");
 const EmailTemplate = require('../../models/reporting');
 const financial = require('../../models/documentTemplateModel');
-const chromium = require('@sparticuz/chromium');
-// const chromium = require('chrome-aws-lambda');
-const puppeteer = require('puppeteer-core');
+
 const nodemailer = require('nodemailer');
 
+const puppeteer = require("puppeteer-core");
+const chromium = require("@sparticuz/chromium");
 exports.createStorage = async (req, res) => {
     try {
         const storage = new Storage(req.body);
@@ -135,7 +135,13 @@ exports.updateStorage = async (req, res) => {
                 return true; // Keep other valid values
             })
         );
-        const updatedStorage = await Storage.findByIdAndUpdate(id, filteredBody, { new: true });
+    const updatedStorage = await Storage.findByIdAndUpdate(
+  id,
+  filteredBody,
+  {
+    returnDocument: "after"
+  }
+);
         if (!updatedStorage) {
             return res.status(404).json({
                 success: false,
@@ -329,15 +335,18 @@ exports.sendInvoicePDF = async (req, res) => {
             return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
         });
 
-        const transporter = nodemailer.createTransport({
-            service: 'Gmail',
-            auth: {
-                user: process.env.GMAIL_USER,
-                pass: process.env.GMAIL_PASS,
-            },
-        });
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
         const mailOptions = {
-            from: process.env.GMAIL_USER,
+            from: process.env.SMTP_USER,
             to: storage.customer?.email,
             subject: `Invoice from ${company.companyName} for warehouse Charges`,
             html: emailHtml,
@@ -355,94 +364,112 @@ exports.sendInvoicePDF = async (req, res) => {
     }
 };
 
-const pdf = require("html-pdf");
 
 async function generatePdf(htmlContent, data) {
+  const itemsHtml = `
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th style="padding: 15px 0; width: 60%;">Description</th>
+          <th style="padding: 15px 0; width: 10%;">Quantity</th>
+          <th style="padding: 15px 0; width: 10%;">Price</th>
+          <th style="padding: 15px 0; width: 10%;">Total</th>
+          <th style="padding: 15px 0; width: 10%;">BTW (%)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.invoice.items
+          .map(
+            (item) => `
+          <tr>
+            <td style="padding:15px 0">
+              ${item.description}
+            </td>
 
-    const itemsHtml = `
-    <div>
-        <table style="width:100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th>Description</th>
-                    <th>Item Code</th>
-                    <th>Contents</th>
-                    <th>Loaded On</th>
-                    <th>Employee</th>
-                    <th>Customer</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.storage?.events.map(item => `
-                    <tr>
-                        <td>${item.description}</td>
-                        <td>${item.itemCode}</td>
-                        <td>${item.contents}m³</td>
-                        <td>${new Date(item.loadedOn).toLocaleDateString()}</td>
-                        <td>${item.loadedByEmployee?.username || ''}</td>
-                        <td>${item.loadedByCustomer ? 'Yes' : 'No'}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    </div>
-    `;
+            <td style="padding:15px 0">
+              ${item.quantity}
+            </td>
 
-    const actionHtml = `
-    <div>
-        <table style="width:100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th>Description</th>
-                    <th>Date</th>
-                    <th>Amount</th>
-                    <th>Quantity</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.storage?.costAction.map(item => `
-                    <tr>
-                        <td>${item?.description}</td>
-                        <td>${new Date(item?.actionDate).toLocaleDateString()}</td>
-                        <td>${item?.price} $</td>
-                        <td>${item?.quantity}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    </div>
-    `;
+            <td style="padding:15px 0">
+              ${(item.price).toFixed(2)} $
+            </td>
 
-    const populatedHtml = htmlContent.replace(
-        /{{\s*(\w+(\.\w+)*)\s*}}/g,
-        (match, key) => {
+            <td style="padding:15px 0">
+              ${(item.quantity * item.price).toFixed(2)} $
+            </td>
 
-            if (key === "items") return itemsHtml;
-            if (key === "actions") return actionHtml;
+            <td style="padding:15px 0">
+              ${item.btw}%
+            </td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 
-            return key
-                .split(".")
-                .reduce((obj, prop) => obj && obj[prop], data) || "";
-        }
-    );
+  const populatedHtml = htmlContent.replace(
+    /{{\s*(\w+(\.\w+)*)\s*}}/g,
+    (match, key) => {
+      if (key === "items") {
+        return itemsHtml;
+      }
 
-    const options = {
-        format: "A4",
-        border: {
-            top: "15mm",
-            right: "15mm",
-            bottom: "15mm",
-            left: "15mm",
-        },
-    };
+      return (
+        key
+          .split(".")
+          .reduce((obj, prop) => obj && obj[prop], data) || ""
+      );
+    }
+  );
 
-    return new Promise((resolve, reject) => {
-        pdf.create(populatedHtml, options).toBuffer((err, buffer) => {
-            if (err) {
-                reject(err);
-            } else {
-                resolve(buffer);
-            }
-        });
+  let browser;
+
+  try {
+    //const isLocal = process.env.NODE_ENV === "development";
+    const isLocal = "development" === "development";
+
+    let launchOptions;
+
+    if (isLocal) {
+      // Windows local Chrome
+      launchOptions = {
+        executablePath:
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        headless: true,
+      };
+    } else {
+      // AWS Lambda / serverless
+      launchOptions = {
+        args: chromium.args,
+        executablePath: await chromium.executablePath(),
+        headless: "shell",
+      };
+    }
+
+    browser = await puppeteer.launch(launchOptions);
+
+    const page = await browser.newPage();
+
+    await page.setContent(populatedHtml, {
+      waitUntil: "networkidle0",
     });
+
+    return await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "15mm",
+        right: "7mm",
+        bottom: "15mm",
+        left: "7mm",
+      },
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+
 }

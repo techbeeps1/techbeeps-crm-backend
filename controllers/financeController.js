@@ -3,8 +3,7 @@ const { ObjectId } = require("mongodb");
 const CompanyDetails = require("../models/companyModel");
 const nodemailer = require('nodemailer');
 const EmailTemplate = require('../models/reporting');
-const chromium = require('@sparticuz/chromium');
-const puppeteer = require('puppeteer-core');
+
 const Email = require('../models/Email/email');
 
 exports.finance = async (req, res) => {
@@ -24,10 +23,14 @@ exports.updateInvoice = async (req, res) => {
   const { id } = req.params; // Get the invoice ID from request parameters
   const updatedData = req.body; // Get the updated data from request body
   try {
-    const updatedInvoice = await Finance.findByIdAndUpdate(id, updatedData, {
-      new: true, // Return the updated document
-      runValidators: true // Ensure validators are run on the update
-    });
+    const updatedInvoice = await Finance.findByIdAndUpdate(
+  id,
+  updatedData,
+  {
+    returnDocument: "after",
+    runValidators: true
+  }
+);
     if (!updatedInvoice) {
       return res.status(404).json({
         message: 'Invoice not found'
@@ -168,8 +171,9 @@ exports.DownloadInvoicePDF = async (req, res) => {
   }
 };
 
-const pdf = require("html-pdf");
 
+const puppeteer = require("puppeteer-core");
+const chromium = require("@sparticuz/chromium");
 async function generatePdf(htmlContent, data) {
   const itemsHtml = `
     <table style="width: 100%; border-collapse: collapse;">
@@ -229,28 +233,55 @@ async function generatePdf(htmlContent, data) {
     }
   );
 
-  const options = {
-    format: "A4",
-    border: {
-      top: "15mm",
-      right: "7mm",
-      bottom: "15mm",
-      left: "7mm",
-    },
-    timeout: 30000,
-  };
+  let browser;
 
-  return new Promise((resolve, reject) => {
-    pdf.create(populatedHtml, options).toBuffer((err, buffer) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(buffer);
-      }
+  try {
+    //const isLocal = process.env.NODE_ENV === "development";
+    const isLocal = "development" === "development";
+
+    let launchOptions;
+
+    if (isLocal) {
+      // Windows local Chrome
+      launchOptions = {
+        executablePath:
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        headless: true,
+      };
+    } else {
+      // AWS Lambda / serverless
+      launchOptions = {
+        args: chromium.args,
+        executablePath: await chromium.executablePath(),
+        headless: "shell",
+      };
+    }
+
+    browser = await puppeteer.launch(launchOptions);
+
+    const page = await browser.newPage();
+
+    await page.setContent(populatedHtml, {
+      waitUntil: "networkidle0",
     });
-  });
-}
 
+    return await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "15mm",
+        right: "7mm",
+        bottom: "15mm",
+        left: "7mm",
+      },
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+
+}
 exports.createInvoicePDF = async (req, res) => {
   const { Id, emailTemplateId, content } = req.body;
   if (!ObjectId.isValid(Id)) {
@@ -291,15 +322,18 @@ exports.createInvoicePDF = async (req, res) => {
       return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
     });
 
-    const transporter = nodemailer.createTransport({
-      service: 'Gmail',
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-      },
-    });
+ const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
     const mailOptions = {
-      from: process.env.GMAIL_USER,
+      from: process.env.SMTP_USER,
       to: invoice.customer?.email,
       subject: `Quatation # ${invoice.index} from ${company.companyName}`,
       html: emailHtml,
@@ -310,7 +344,7 @@ exports.createInvoicePDF = async (req, res) => {
       }] || null,
     };
     const newEmail = new Email({
-      from: process.env.GMAIL_USER,
+      from: process.env.SMTP_USER,
       recipient: data.customer?.email,
       subject: mailOptions.subject,
       htmlContent: mailOptions.html,

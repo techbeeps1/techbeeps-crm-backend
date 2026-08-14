@@ -259,15 +259,18 @@ exports.createInvoicePDF = async (req, res) => {
       return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
     });
 
-    const transporter = nodemailer.createTransport({
-      service: 'Gmail',
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-      },
-    });
+ const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
     const mailOptions = {
-      from: process.env.GMAIL_USER,
+      from: process.env.SMTP_USER,
       to: invoice.customer?.email,
       subject: `Invoice # ${invoice.index} from ${company.companyName}`,
       html: emailHtml,
@@ -278,7 +281,7 @@ exports.createInvoicePDF = async (req, res) => {
       }] || null,
     };
     const newEmail = new Email({
-      from: process.env.GMAIL_USER,
+      from: process.env.SMTP_USER,
       recipient: data.customer.email,
       subject: mailOptions.subject,
       htmlContent: mailOptions.html,

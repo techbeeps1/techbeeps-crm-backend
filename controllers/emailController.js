@@ -7,13 +7,18 @@ const jobSchedule = require('../models/jobSchedule');
 const Email = require('../models/Email/email');
 const User = require('../models/user');
 
+
+
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-    },
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
 });
+
 
 exports.sendOtp = async (req, res) => {
     const { email } = req.body;
@@ -28,7 +33,7 @@ exports.sendOtp = async (req, res) => {
     try {
         await Otp.findOneAndUpdate({ email }, { otp }, { upsert: true });
         const mailOptions = {
-            from: process.env.GMAIL_USER,
+            from: process.env.SMTP_USER,
             to: email,
             subject: 'Your OTP Code',
             text: `Your OTP code is: ${otp}`,
@@ -85,21 +90,24 @@ exports.sendEmail = async (req, res) => {
         emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
             return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
         });
-        const transporter = nodemailer.createTransport({
-            service: 'Gmail',
-            auth: {
-                user: process.env.GMAIL_USER,
-                pass: process.env.GMAIL_PASS,
-            },
-        });
+      const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
         const mailOptions = {
-            from: process.env.GMAIL_USER,
+            from: process.env.SMTP_USER,
             to: job ? jobDetail?.customer?.email : extraData.email,
             subject: subject,
             html: emailHtml,
         };
         const newEmail = new Email({
-            from: process.env.GMAIL_USER,
+            from: process.env.SMTP_USER,
             recipient: mailOptions.to,
             subject: mailOptions.subject,
             htmlContent: mailOptions.html,

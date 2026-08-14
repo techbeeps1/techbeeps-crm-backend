@@ -5,13 +5,15 @@ const Email = require("../../models/Email/email");
 exports.sendInvoice = async (req, res) => {
   const { from, recipient, bcc, subject, htmlContent } = req.body;
 
-  let transporter = nodemailer.createTransport({
-    service: "Gmail",
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASS,
-    },
-  });
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
   let mailOptions = {
     from: from,
