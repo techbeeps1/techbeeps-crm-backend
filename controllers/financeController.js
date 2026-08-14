@@ -237,7 +237,7 @@ async function generatePdf(htmlContent, data) {
 
   try {
     //const isLocal = process.env.NODE_ENV === "development";
-    const isLocal = "development" === "development";
+    const isLocal = "development" !== "development";
 
     let launchOptions;
 
