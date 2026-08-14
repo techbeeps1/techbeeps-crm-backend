@@ -77,21 +77,22 @@ const jodScheduleSchema = new mongoose.Schema({
   relocation: { type: relocationSchema },
 }, { timestamps: true });
 
-jodScheduleSchema.pre('save', async function (next) {
-  if (!this.isNew) return next();  // Only generate index for new documents
-  try {
-    const currentYear = new Date().getFullYear();
-    const lastJob = await this.constructor.findOne({ index: new RegExp(`^${currentYear}/`) })
-      .sort({ createdAt: -1 });
-    const lastIndex = lastJob && lastJob.index
-      ? parseInt(lastJob.index.split('/')[1])
-      : 0;
-    const newIndex = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
-    this.index = newIndex;
-    next();
-  } catch (error) {
-    next(error);
-  }
+jodScheduleSchema.pre('save', async function () {
+  if (!this.isNew) return;
+
+  const currentYear = new Date().getFullYear();
+
+  const lastJob = await this.constructor
+    .findOne({
+      index: new RegExp(`^${currentYear}/`)
+    })
+    .sort({ createdAt: -1 });
+
+  const lastIndex = lastJob?.index
+    ? parseInt(lastJob.index.split('/')[1], 10)
+    : 0;
+
+  this.index = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
 });
 
 module.exports = mongoose.model("jobSchedule", jodScheduleSchema);

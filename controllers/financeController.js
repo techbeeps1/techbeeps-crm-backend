@@ -144,30 +144,52 @@ exports.financeListByCustomerId = async (req, res) => {
 
 exports.DownloadInvoicePDF = async (req, res) => {
   const { Id } = req.body;
+
   try {
-    const invoice = await Finance.findById(Id)
-      .populate('customer')
-      .populate('financialTemplate', 'htmlContent');
-    if (!invoice) {
-      return res.status(404).send('Invoice not found');
+    if (!Id) {
+      return res.status(400).send("Invoice ID is required");
     }
+
+    const invoice = await Finance.findById(Id)
+      .populate("customer")
+      .populate("financialTemplate", "htmlContent");
+
+    if (!invoice) {
+      return res.status(404).send("Invoice not found");
+    }
+
+    if (!invoice.financialTemplate?.htmlContent) {
+      return res.status(404).send("Financial Template not found");
+    }
+
     const company = await CompanyDetails.findOne();
+
+    if (!company) {
+      return res.status(404).send("Company details not found");
+    }
+
     const data = {
-      company: company,
+      company,
       customer: invoice.customer,
-      invoice: invoice,
+      invoice,
     };
-    let html = invoice.financialTemplate.htmlContent;
+
+    const html = invoice.financialTemplate.htmlContent;
+
     const pdfBuffer = await generatePdf(html, data);
+
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="quote.pdf"',
-      'Content-Length': pdfBuffer.length,
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="quote.pdf"',
+      "Content-Length": pdfBuffer.length,
     });
-    res.send(pdfBuffer);
+
+    return res.status(200).send(pdfBuffer);
+
   } catch (error) {
     console.error("Error generating PDF:", error);
-    res.status(500).send("Error generating PDF");
+
+    return res.status(500).send("Error generating PDF");
   }
 };
 
@@ -236,8 +258,8 @@ async function generatePdf(htmlContent, data) {
   let browser;
 
   try {
-    //const isLocal = process.env.NODE_ENV === "development";
-    const isLocal = "development" !== "development";
+    const isLocal = process.env.NODE_ENV === "development";
+  
 
     let launchOptions;
 
@@ -265,7 +287,7 @@ async function generatePdf(htmlContent, data) {
       waitUntil: "networkidle0",
     });
 
-    return await page.pdf({
+  const pdfData = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: {
@@ -275,6 +297,8 @@ async function generatePdf(htmlContent, data) {
         left: "7mm",
       },
     });
+
+    return Buffer.from(pdfData);
   } finally {
     if (browser) {
       await browser.close();

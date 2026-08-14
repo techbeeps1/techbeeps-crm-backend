@@ -66,21 +66,25 @@ const invoiceSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-invoiceSchema.pre('save', async function (next) {
-  if (!this.isNew) return next();
-  try {
-    const Type = this.Type;
-    const currentYear = new Date().getFullYear();
-    const lastInvoice = await this.constructor.findOne({ Type }).sort({ createdAt: -1 });
-    const lastIndex = lastInvoice && lastInvoice.index
-      ? parseInt(lastInvoice.index.split('/')[1])
-      : 0;
-    const newIndex = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
-    this.index = newIndex;
-    next();
-  } catch (error) {
-    next(error);
-  }
+
+
+invoiceSchema.pre('save', async function () {
+  if (!this.isNew) return;
+
+  const Type = this.Type;
+  const currentYear = new Date().getFullYear();
+
+  const lastInvoice = await this.constructor
+    .findOne({ Type })
+    .sort({ createdAt: -1 });
+
+  const lastIndex = lastInvoice?.index
+    ? parseInt(lastInvoice.index.split('/')[1], 10)
+    : 0;
+
+  const newIndex = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
+
+  this.index = newIndex;
 });
 
 

@@ -427,8 +427,7 @@ async function generatePdf(htmlContent, data) {
   let browser;
 
   try {
-    //const isLocal = process.env.NODE_ENV === "development";
-    const isLocal = "development" !== "development";
+    const isLocal = process.env.NODE_ENV === "development";
 
     let launchOptions;
 
@@ -456,7 +455,7 @@ async function generatePdf(htmlContent, data) {
       waitUntil: "networkidle0",
     });
 
-    return await page.pdf({
+  const pdfData = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: {
@@ -466,6 +465,8 @@ async function generatePdf(htmlContent, data) {
         left: "7mm",
       },
     });
+
+    return Buffer.from(pdfData);
   } finally {
     if (browser) {
       await browser.close();

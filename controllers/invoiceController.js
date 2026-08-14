@@ -195,32 +195,44 @@ async function generatePdf(htmlContent, data) {
     return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
   });
 
-  // const browser = await puppeteer.launch({
-  //   executablePath: 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  //   headless: true
-  // });
+    const isLocal = process.env.NODE_ENV === "development";
+  
 
-  const browser = await puppeteer.launch({
-    executablePath: await chromium.executablePath(),
-    args: chromium.args,
-    headless: chromium.headless,
-  });
+    let launchOptions;
 
+    if (isLocal) {
+      // Windows local Chrome
+      launchOptions = {
+        executablePath:
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        headless: true,
+      };
+    } else {
+      // AWS Lambda / serverless
+      launchOptions = {
+        args: chromium.args,
+        executablePath: await chromium.executablePath(),
+        headless: "shell",
+      };
+    }
+
+    browser = await puppeteer.launch(launchOptions);
   const page = await browser.newPage();
   await page.setContent(populatedHtml, { waitUntil: 'networkidle0' });
 
-  const pdfBuffer = await page.pdf({
-    format: 'A4',
-    printBackground: true,
-    margin: {
-      top: '15mm',     // Top padding
-      right: '15mm',   // Right padding
-      bottom: '15mm',  // Bottom padding
-      left: '15mm',    // Left padding
-    },
-  });
-  await browser.close();
-  return pdfBuffer;
+
+  const pdfData = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "15mm",
+        right: "7mm",
+        bottom: "15mm",
+        left: "7mm",
+      },
+    });
+
+    return Buffer.from(pdfData);
 }
 
 exports.createInvoicePDF = async (req, res) => {
@@ -293,7 +305,7 @@ exports.createInvoicePDF = async (req, res) => {
     res.status(200).send(savedEmail._id);
   } catch (error) {
     console.error("Error generating or sending PDF:", error);
-    res.status(500).send("Error generating or sending PDF");
+    res.status(500).send(error);
   }
 };
 
