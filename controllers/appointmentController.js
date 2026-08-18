@@ -67,46 +67,13 @@ function toISTISOString(date) {
 }
 
 exports.getAppointments = async (req, res) => {
-    try {
-        const { jobId, date } = req.query;
-        let formattedDate = null;
-        if (date) {
-            const inputDate = new Date(date); // Parse the provided date string
-            formattedDate = new Date(inputDate.setHours(0, 0, 0, 0)).toISOString(); // Start of the day in UTC
-        }
-        const query = { jobId };
-        if (formattedDate) {
-            query.date = { $gte: formattedDate, $lt: new Date(new Date(formattedDate).setDate(new Date(formattedDate).getDate() + 1)).toISOString() };
-        }
-        const appointments = await Appointment.find(query).populate({
-    path: "assignedEmployees",
-    populate: {
-      path: "vehicle",
-      select: "name licensePlate"
-    }
-  });
-const data = appointments.map(item => {
-  const obj = item.toObject();
+  try {
+    const appointments = await Appointment.find();
 
-  obj.date = toISTISOString(obj.date);
-  obj.startTime = toISTISOString(obj.startTime);
-  obj.endTime = toISTISOString(obj.endTime);
-
-  obj.assignedEmployees = obj.assignedEmployees.map(emp => ({
-    ...emp,
-    startTime: toISTISOString(emp.startTime),
-    endTime: toISTISOString(emp.endTime),
-  }));
-
-  return obj;
-});
-
-
-
-        res.status(200).json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 
