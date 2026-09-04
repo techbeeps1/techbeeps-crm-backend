@@ -1,10 +1,13 @@
 const Finance = require('../models/finance');
+const JobSchedule = require('../models/jobSchedule');
+const mongoose = require('mongoose');
 const { ObjectId } = require("mongodb");
 const CompanyDetails = require("../models/companyModel");
 const nodemailer = require('nodemailer');
 const EmailTemplate = require('../models/reporting');
 
 const Email = require('../models/Email/email');
+const jwt = require('jsonwebtoken');
 
 exports.finance = async (req, res) => {
   try {
@@ -20,22 +23,60 @@ exports.finance = async (req, res) => {
 }
 
 exports.updateInvoice = async (req, res) => {
-  const { id } = req.params; // Get the invoice ID from request parameters
-  const updatedData = req.body; // Get the updated data from request body
+  const { id } = req.params;
+  const updatedData = req.body;
+
+  // If request comes with auth token from CRM user, restrict edit privileges to Admin
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded && decoded.role !== 'Admin') {
+        return res.status(403).json({ msg: 'Access denied: Staff and Agents cannot edit quotes' });
+      }
+    } catch (tokenErr) {
+      // If token is invalid or expired, continue only if it is a public status update
+    }
+  }
   try {
     const updatedInvoice = await Finance.findByIdAndUpdate(
-  id,
-  updatedData,
-  {
-    returnDocument: "after",
-    runValidators: true
-  }
-);
+      id,
+      updatedData,
+      {
+        returnDocument: "after",
+        runValidators: true
+      }
+    );
     if (!updatedInvoice) {
       return res.status(404).json({
         message: 'Invoice not found'
       });
     }
+
+    // If quotation status is updated to Accepted, update linked job from Pending to Processing
+    if (updatedData.Status && updatedData.Status.toLowerCase() === 'accepted') {
+      try {
+        const queryConditions = [{ offer: id }];
+        if (mongoose.Types.ObjectId.isValid(id)) {
+          queryConditions.push({ offer: new mongoose.Types.ObjectId(id) });
+        }
+        if (updatedInvoice.job) {
+          queryConditions.push({ _id: updatedInvoice.job });
+        }
+
+        const linkedJobs = await JobSchedule.find({ $or: queryConditions });
+        for (const job of linkedJobs) {
+          const currentJobStatus = (job.status || '').toLowerCase();
+          if (currentJobStatus === 'pending') {
+            job.status = 'Processing';
+            await job.save();
+          }
+        }
+      } catch (jobErr) {
+        console.error('Error updating linked job status on quote acceptance:', jobErr);
+      }
+    }
+
     res.status(200).json(updatedInvoice);
   } catch (error) {
     res.status(500).json({
@@ -210,8 +251,8 @@ async function generatePdf(htmlContent, data) {
       </thead>
       <tbody>
         ${data.invoice.items
-          .map(
-            (item) => `
+      .map(
+        (item) => `
           <tr>
             <td style="padding:15px 0">
               ${item.description}
@@ -234,8 +275,8 @@ async function generatePdf(htmlContent, data) {
             </td>
           </tr>
         `
-          )
-          .join("")}
+      )
+      .join("")}
       </tbody>
     </table>
   `;
@@ -259,7 +300,7 @@ async function generatePdf(htmlContent, data) {
 
   try {
     const isLocal = process.env.NODE_ENV === "development";
-  
+
 
     let launchOptions;
 
@@ -287,7 +328,7 @@ async function generatePdf(htmlContent, data) {
       waitUntil: "networkidle0",
     });
 
-  const pdfData = await page.pdf({
+    const pdfData = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: {
@@ -346,15 +387,15 @@ exports.createInvoicePDF = async (req, res) => {
       return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
     });
 
- const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
 
     const mailOptions = {
       from: process.env.SMTP_USER,

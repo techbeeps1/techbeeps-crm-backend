@@ -76,6 +76,8 @@ const appSettingsRoutes = require("./routes/appSettingRoutes")
 const valuationRoutes = require('./routes/Valuation/valuationRoutes');
 //const iconRoutes = require('./routes/Valuation/iconRoutes');
 const employabilityRoutes = require("./routes/employabilityRoutes");
+const leaveRoutes = require("./routes/leaveRoutes");
+const authMiddleware = require("./middlewares/authMiddlerware");
 
 
 server.get("/", (req, res) => {
@@ -92,20 +94,21 @@ server.use("/api", documentTemplateRoutes);
 server.use("/api", companyRoutes)
 server.use("/api", appSettingsRoutes);
 
-server.use("/api/task", taskRoutes);
+server.use("/api/task", authMiddleware, taskRoutes);
 
 // user routes
 server.use("/user", userRoutes);
 server.use("/email", emailRoutes)
 
-server.use("/customer", customerRoutes);
+server.use("/customer", authMiddleware, customerRoutes);
 server.use("/invoice", invoiceRoutes);
 server.use("/api", paymentRoutes);
 server.use('/api/packages', packageRoutes);
 server.use("/api/sale_group", salesGroupRoutes);
 
-server.use('/api/appointment', appointmentRoutes);
-server.use('/api/employability', employabilityRoutes);
+server.use('/api/appointment', authMiddleware, appointmentRoutes);
+server.use('/api/employability', authMiddleware, employabilityRoutes);
+server.use('/api/leave', leaveRoutes);
 
 server.use("/api/activities", activityRoutes);
 server.use("/api", teamRoutes);
@@ -113,7 +116,7 @@ server.use("/api/input", dynamicInputController);
 
 //server.use("/quote", quoteRoutes);
 server.use("/finance", financeRoutes);
-server.use("/leads", leadRoutes);
+server.use("/leads", authMiddleware, leadRoutes);
 
 server.use("/api", uploadDocumentRoutes);
 
@@ -134,7 +137,7 @@ server.use("/api", storageRoutes);
 
 
 //server.use("/api", staffRoutes);
-server.use('/Communication', newsItemsRoutes);
+server.use('/Communication', authMiddleware, newsItemsRoutes);
 
 const dns = require('dns');
 

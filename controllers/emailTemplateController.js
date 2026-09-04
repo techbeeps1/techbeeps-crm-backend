@@ -19,42 +19,6 @@ const sendEmail = async (req, res) => {
 };
 
 
-const getAllEmails = async (req, res) => {
-  try {
-    const { page, rowsPerPage = 10, search = '', customerId ,offerId} = req.query;
-    const pageNumber = parseInt(page, 10) || 1;
-    const limit = parseInt(rowsPerPage, 10) || 10;
-    const searchFilter = search
-      ? {
-          $or: [
-            { from: { $regex: search, $options: 'i' } },
-            { to: { $regex: search, $options: 'i' } },
-            { subject: { $regex: search, $options: 'i' } },
-          ],
-        }
-      : {};
-    const customerFilter = customerId ? { customer: customerId } : {};
-    const offerFilter = offerId ? { offer: offerId } : {};
-    const filter = { ...searchFilter, ...customerFilter ,...offerFilter};
-    const sortBy = { _id: -1 };
-    const totalEmails = await Email.countDocuments(filter);
-    const emails = await Email.find(filter)
-      .sort(sortBy)
-      .skip((pageNumber - 1) * limit)
-      .limit(limit);
-    res.status(200).json({
-      emails,
-      totalEmails,
-      totalPages: Math.ceil(totalEmails / limit),
-      currentPage: pageNumber,
-    });
-  } catch (error) {
-    console.error('Error in getAllEmails:', error.message);
-    res.status(500).json({ message: 'Error fetching emails', error });
-  }
-};
-
-
 const getEmailById = async (req, res) => {
   try {
     const email = await Email.findById(req.params.id);
@@ -102,7 +66,6 @@ const deleteEmail = async (req, res) => {
 
 module.exports = {
   sendEmail,
-  getAllEmails,
   getEmailById,
   updateEmail,
   deleteEmail,

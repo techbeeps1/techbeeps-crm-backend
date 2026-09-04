@@ -2,14 +2,16 @@ const express = require('express');
 const router = express.Router();
 const invoiceController = require('../controllers/invoiceController');
 const sendInvoiceController  = require('../controllers/FinanceInvoice/sendInvoiceController');
+const authMiddleware = require('../middlewares/authMiddlerware');
+const roleMiddleware = require('../middlewares/roleMiddleware');
 
-router.post('/new_invoice', invoiceController.invoice);
+router.post('/new_invoice', authMiddleware, roleMiddleware('Admin'), invoiceController.invoice);
 router.get('/invoice/:Id',invoiceController.invoiceDetail)
 router.get('/invoiceList', invoiceController.invoiceList);
-router.post('/update/:id',invoiceController.updateInvoice)
+router.post('/update/:id', authMiddleware, roleMiddleware('Admin'), invoiceController.updateInvoice)
 router.post('/send',invoiceController.createInvoicePDF)
 router.post('/download',invoiceController.DownloadInvoicePDF)
-router.delete('/deleteInvoice/:invoiceId', invoiceController.deleteInvoice);
+router.delete('/deleteInvoice/:invoiceId', authMiddleware, roleMiddleware('Admin'), invoiceController.deleteInvoice);
 
 router.get('/invoiceListByCustomerId', invoiceController.invoiceListByCustomerId);
 

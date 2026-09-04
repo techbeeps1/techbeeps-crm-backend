@@ -20,6 +20,14 @@ const taskSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
     }],
+    teams: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'teams'
+    }],
+    directMembers: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }],
     priority: {
         type: String,
     },

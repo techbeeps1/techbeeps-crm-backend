@@ -6,8 +6,26 @@ const jwt = require("jsonwebtoken");
 const Otp = require("../models/otpModel");
 const Vehicle = require('../models/Resources/vehicle');
 
+const ALL_CRM_MODULES = [
+  'Dashboard',
+  'Work',
+  'Leads',
+  'Customer',
+  'Jobs',
+  'Planning',
+  'Finance',
+  'Tasks',
+  'Resources',
+  'HRM',
+  'Communication',
+  'Settings',
+  'Features',
+  'Profile',
+  'Notifications'
+];
+
 const registerUser = async (req, res) => {
-  const { username, email, password, role } = req.body; // Role can be passed in the request body
+  const { username, email, password, role, access } = req.body;
   try {
     let user = await User.findOne({ email });
     if (user) {
@@ -15,14 +33,29 @@ const registerUser = async (req, res) => {
     }
     const bcryptSalt = bcrypt.genSaltSync(10);
     const hashedPassword = await bcrypt.hash(password, bcryptSalt);
+
+    let assignedAccess = access;
+    if (!assignedAccess || !Array.isArray(assignedAccess) || assignedAccess.length === 0) {
+      assignedAccess = role === 'Admin' ? ALL_CRM_MODULES : ['Dashboard'];
+    }
+
     user = new User({
       ...req.body,
+      role: role || 'Staff',
+      access: assignedAccess,
       password: hashedPassword,
     });
     await user.save();
     const token = jwt.sign(
-      { userId: user._id, username: user.username, role: user.role },
+      {
+        userId: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        access: user.access,
+      },
       process.env.JWT_SECRET,
+      { expiresIn: '7d' }
     );
     return res
       .status(201)
@@ -30,9 +63,13 @@ const registerUser = async (req, res) => {
         token,
         user: {
           id: user._id,
+          _id: user._id,
+          userId: user._id,
           username: user.username,
+          name: user.username,
           email: user.email,
           role: user.role,
+          access: user.access,
         },
       });
   } catch (err) {
@@ -51,15 +88,36 @@ const loginUser = async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ msg: "Invalid credentials" });
     }
+
+    const userAccess = (user.role === 'Admin' && (!user.access || user.access.length === 0))
+      ? ALL_CRM_MODULES
+      : (user.access || ['Dashboard']);
+
     const token = jwt.sign(
-      { userId: user._id, username: user.username, role: user.role },
+      {
+        userId: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        access: userAccess,
+      },
       process.env.JWT_SECRET,
+      { expiresIn: '7d' }
     );
     return res
       .status(200)
       .json({
         token,
-        user: { id: user._id, name: user.username, email: user.email },
+        user: {
+          id: user._id,
+          _id: user._id,
+          userId: user._id,
+          name: user.username,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          access: userAccess,
+        },
       });
   } catch (err) {
     return res.status(500).json({ msg: "Server error" });
@@ -71,14 +129,22 @@ const ProfileUser = async (req, res) => {
   try {
     const user = await User.findById(userId); // Use findById to get user by userId
     if (!user) {
-      return res.status(404).json({ msg: "User not found" }); // Use 404 for not found
+      return res.status(404).json({ msg: "User not found" });
     }
+    const userAccess = (user.role === 'Admin' && (!user.access || user.access.length === 0))
+      ? ALL_CRM_MODULES
+      : (user.access || ['Dashboard']);
+
     return res.status(200).json({
       user: {
         userId: user._id,
+        _id: user._id,
+        id: user._id,
         username: user.username,
+        name: user.username,
         email: user.email,
         role: user.role,
+        access: userAccess,
       },
     });
   } catch (err) {
@@ -270,21 +336,28 @@ const ResetPassword = async (req, res) => {
   }
 };
 const UpdateDetails = async (req, res) => {
-  const { id } = req.body;
+  const { id, access, role } = req.body;
   try {
+    const updatePayload = { ...req.body };
+    if (role === 'Admin' && (!access || !Array.isArray(access) || access.length === 0)) {
+      updatePayload.access = ALL_CRM_MODULES;
+    } else if (Array.isArray(access)) {
+      updatePayload.access = access;
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
       id,
-      { ...req.body },
-      { new: true, runValidators: true }, // Options to return the updated document and run validation
+      updatePayload,
+      { new: true, runValidators: true },
     );
     if (!updatedUser) {
       return res.status(404).json({ msg: "User not found." });
     }
     return res
       .status(200)
-      .json({ msg: "Admin role assign successfully.", user: updatedUser });
+      .json({ msg: "Employee updated successfully.", user: updatedUser });
   } catch (err) {
-    console.error(err); // Log the error for debugging
+    console.error(err);
     return res.status(500).json({ msg: "Server error" });
   }
 };

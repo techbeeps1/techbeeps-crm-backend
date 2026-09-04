@@ -9,12 +9,12 @@ const router = express.Router();
 router.post('/register', registerUser);
 router.post('/login', loginUser);
 router.get('/profile', authMiddleware, ProfileUser);
-router.get('/all', Allusers);
-router.get('/employees/:date', Allemployees);
-router.post('/deleteuser',authMiddleware , DeleteUser);
+router.get('/all', authMiddleware, Allusers);
+router.get('/employees/:date', authMiddleware, Allemployees);
+router.post('/deleteuser', authMiddleware, roleMiddleware('Admin'), DeleteUser);
 router.post('/reset_password', ResetPassword);
-router.post('/update',authMiddleware ,UpdateDetails);
-router.post('/assign_admin',authMiddleware,MakeAdmin);
+router.post('/update', authMiddleware, UpdateDetails);
+router.post('/assign_admin', authMiddleware, roleMiddleware('Admin'), MakeAdmin);
 
 
 module.exports = router;

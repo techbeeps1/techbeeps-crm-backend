@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const JobSchedule = require("../../models/jobSchedule");
 const Customer = require("../../models/customer");
 const Package = require("../../models/PackageModel");
@@ -28,25 +29,32 @@ exports.valuationMaster = async (req, res) => {
     // 1️⃣ **Check if Job Exists or Create New**
 
     let customerExists;
-    if (customer?._id) {
-      customerExists = await Customer.findById(customer._id);
+    const targetCustomerId = customer?._id || customer?.customerId;
+    if (targetCustomerId && mongoose.Types.ObjectId.isValid(targetCustomerId)) {
+      customerExists = await Customer.findById(targetCustomerId);
 
       if (customerExists) {
         customerExists = await Customer.findByIdAndUpdate(
-          customer._id,
+          customerExists._id,
           customer,
           { new: true },
         );
-      } else {
+      } else if (customer?.email) {
         customerExists = await Customer.findOne({
           email: customer.email,
         });
 
         if (!customerExists) {
           customerExists = await Customer.create(customer);
+        } else {
+          customerExists = await Customer.findByIdAndUpdate(
+            customerExists._id,
+            customer,
+            { new: true },
+          );
         }
       }
-    } else {
+    } else if (customer?.email) {
       customerExists = await Customer.findOne({
         email: customer.email,
       });
@@ -61,13 +69,32 @@ exports.valuationMaster = async (req, res) => {
         customerExists = await Customer.create(customer);
       }
     }
-    if (jobId) {
+
+    const isSendImmediately = sendImmediately === true || sendImmediately === "true";
+    const isSignWithCustomer = signWithCustomer === true || signWithCustomer === "true";
+
+    let jobStatus = "Pending";
+    if (isSignWithCustomer) {
+      jobStatus = "Processing";
+    } else if (isSendImmediately) {
+      jobStatus = "Pending";
+    } else {
+      jobStatus = "Draft";
+    }
+
+    const quoteStatus = isSignWithCustomer
+      ? "Accepted"
+      : isSendImmediately
+        ? "Sent"
+        : "Draft";
+
+    if (jobId && mongoose.Types.ObjectId.isValid(jobId)) {
       job = await JobSchedule.findById(jobId);
       if (!job) {
-        job = await JobSchedule.create({ status: "execution" });
+        job = await JobSchedule.create({ status: jobStatus });
       }
     } else {
-      job = await JobSchedule.create({ status: "execution" });
+      job = await JobSchedule.create({ status: jobStatus });
     }
 
     // 2️⃣ **Check if Customer Exists or Create New**
@@ -87,11 +114,7 @@ exports.valuationMaster = async (req, res) => {
           ...offer,
           customer: customerExists._id,
           package: package,
-          Status: signWithCustomer
-            ? "Accepted"
-            : sendImmediately
-              ? "Sent"
-              : "Draft",
+          Status: quoteStatus,
         },
         { new: true },
       );
@@ -101,11 +124,7 @@ exports.valuationMaster = async (req, res) => {
         customer: customerExists._id,
         package: package,
         job: job._id,
-        Status: signWithCustomer
-          ? "Accepted"
-          : sendImmediately
-            ? "Sent"
-            : "Draft",
+        Status: quoteStatus,
       });
     }
 
@@ -137,7 +156,7 @@ exports.valuationMaster = async (req, res) => {
 
     // 8️⃣ **Update JobSchedule**
     job.customer = customerExists._id;
-    job.status = "execution";
+    job.status = jobStatus;
     job.package = packageExists._id;
     job.load = load || job.load;
     job.unload = unload || job.unload;

@@ -30,9 +30,8 @@ const MovingBoxSchema = new mongoose.Schema(
   }
 );
 
-MovingBoxSchema.pre('save', function (next) {
+MovingBoxSchema.pre('save', function () {
   this.cubicMeter = (this.height * this.width * this.length) / 1000000;
-  next();
 });
 
 module.exports = mongoose.model('MovingBox', MovingBoxSchema);

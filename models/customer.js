@@ -41,19 +41,16 @@ const customerSchema = new mongoose.Schema({
 
 
 // { type: this.type }
-customerSchema.pre('save', async function (next) {
+customerSchema.pre('save', async function () {
   if (this.isNew) {
     try {
       const lastCustomer = await this.constructor
         .findOne()
         .sort({ customerIndex: -1 });
       this.customerIndex = lastCustomer ? lastCustomer.customerIndex + 1 : 1;
-      next();
     } catch (error) {
-      next(error);
+      throw error;
     }
-  } else {
-    next();
   }
 });
 

@@ -23,19 +23,16 @@ const leadSchema = new mongoose.Schema({
    
 });
 
-leadSchema.pre('save', async function (next) {
+leadSchema.pre('save', async function () {
     if (this.isNew) {
       try {
         const lastLead = await this.constructor
           .findOne()
           .sort({ leadIndex: -1 });
         this.leadIndex = lastLead ? lastLead.leadIndex + 1 : 1;
-        next();
       } catch (error) {
-        next(error);
+        throw error;
       }
-    } else {
-      next();
     }
   });
 

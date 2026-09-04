@@ -56,7 +56,7 @@ const relocationSchema = new mongoose.Schema({
 
 
 const jodScheduleSchema = new mongoose.Schema({
-  status: { type: String, default: "offer" },
+  status: { type: String, default: "Pending" },
   index: { type: String },
   date: { type: Date, default: Date.now },
   load: { type: addressSchema },

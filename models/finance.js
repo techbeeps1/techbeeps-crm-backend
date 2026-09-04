@@ -61,8 +61,8 @@ const financeSchema = new mongoose.Schema({
   expire_date: { type: Date }
 }, { timestamps: true });
 
-financeSchema.pre('save', async function (next) {
-  if (!this.isNew) return next();
+financeSchema.pre('save', async function () {
+  if (!this.isNew) return;
   try {
     const currentYear = new Date().getFullYear();
     const lastInvoice = await this.constructor.findOne({ index: new RegExp(`^${currentYear}/`) })
@@ -72,9 +72,8 @@ financeSchema.pre('save', async function (next) {
       : 0;
     const newIndex = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
     this.index = newIndex;
-    next();
   } catch (error) {
-    next(error);
+    throw error;
   }
 });
 
