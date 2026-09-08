@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const employabilitySchema = new mongoose.Schema({
     employeeId :{
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'user',
+        ref: 'User',
     },
     employeeName: String,
     workType: String,

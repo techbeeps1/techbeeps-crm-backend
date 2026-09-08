@@ -35,7 +35,8 @@ server.use((req, res, next) => {
 });
 
 server.use(express.static('uploads'));
-server.use(bodyParser.json());
+server.use(bodyParser.json({ limit: '50mb' }));
+server.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 // server.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const emailRoutes = require("./routes/emailRoutes");
@@ -77,6 +78,10 @@ const valuationRoutes = require('./routes/Valuation/valuationRoutes');
 //const iconRoutes = require('./routes/Valuation/iconRoutes');
 const employabilityRoutes = require("./routes/employabilityRoutes");
 const leaveRoutes = require("./routes/leaveRoutes");
+const availabilityRoutes = require("./routes/availabilityRoutes");
+const hoursRoutes = require("./routes/hoursRoutes");
+const declarationRoutes = require("./routes/declarationRoutes");
+const damageClaimRoutes = require("./routes/damageClaimRoutes");
 const authMiddleware = require("./middlewares/authMiddlerware");
 
 
@@ -109,6 +114,10 @@ server.use("/api/sale_group", salesGroupRoutes);
 server.use('/api/appointment', authMiddleware, appointmentRoutes);
 server.use('/api/employability', authMiddleware, employabilityRoutes);
 server.use('/api/leave', leaveRoutes);
+server.use('/api/availability', availabilityRoutes);
+server.use('/api/hours', hoursRoutes);
+server.use('/api/declarations', declarationRoutes);
+server.use('/api/damage-claims', damageClaimRoutes);
 
 server.use("/api/activities", activityRoutes);
 server.use("/api", teamRoutes);

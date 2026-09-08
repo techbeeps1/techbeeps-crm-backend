@@ -76,8 +76,8 @@ exports.jobList = async (req, res) => {
       filter.invoice = invoice;
     }
     const jobList = await JobSchedule.find(filter)
-      .select('customer date status load unload') // Select only necessary fields
-      .populate('customer', 'firstName lastName') // Populate only necessary fields in customer
+      .select('customer date status load unload index') // Select only necessary fields
+      .populate('customer', 'firstName lastName email contact mobile') // Include contact info
       .lean(); // Converts documents to plain JS objects
     const optimizedJobList = jobList.map(job => ({
       ...job,

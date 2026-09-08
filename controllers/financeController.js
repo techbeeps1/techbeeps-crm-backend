@@ -8,6 +8,7 @@ const EmailTemplate = require('../models/reporting');
 
 const Email = require('../models/Email/email');
 const jwt = require('jsonwebtoken');
+const AppSettings = require('../models/appSettingModel');
 
 exports.finance = async (req, res) => {
   try {
@@ -209,10 +210,15 @@ exports.DownloadInvoicePDF = async (req, res) => {
       return res.status(404).send("Company details not found");
     }
 
+    const appSettings = await AppSettings.findOne();
     const data = {
       company,
       customer: invoice.customer,
       invoice,
+      currency: appSettings?.currency || 'USD',
+      currencySymbol: appSettings?.currencySymbol || '$',
+      currencyPosition: appSettings?.currencyPosition || 'before',
+      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
 
     const html = invoice.financialTemplate.htmlContent;
@@ -238,6 +244,14 @@ exports.DownloadInvoicePDF = async (req, res) => {
 const puppeteer = require("puppeteer-core");
 const chromium = require("@sparticuz/chromium");
 async function generatePdf(htmlContent, data) {
+  const sym = data.currencySymbol || '$';
+  const pos = data.currencyPosition || 'before';
+  const dec = data.currencyDecimals !== undefined ? data.currencyDecimals : 2;
+  const fmt = (num) => {
+    const val = Number(num || 0).toFixed(dec);
+    return pos === 'after' ? `${val} ${sym}` : `${sym} ${val}`;
+  };
+
   const itemsHtml = `
     <table style="width: 100%; border-collapse: collapse;">
       <thead>
@@ -263,11 +277,11 @@ async function generatePdf(htmlContent, data) {
             </td>
 
             <td style="padding:15px 0">
-              ${(item.price).toFixed(2)} $
+              ${fmt(item.price)}
             </td>
 
             <td style="padding:15px 0">
-              ${(item.quantity * item.price).toFixed(2)} $
+              ${fmt(item.quantity * item.price)}
             </td>
 
             <td style="padding:15px 0">
@@ -369,11 +383,16 @@ exports.createInvoicePDF = async (req, res) => {
     }
     let emailHtml = emailTemplate.htmlContent;
 
+    const appSettings = await AppSettings.findOne();
     const data = {
       company: company,
       customer: invoice.customer,
       invoice: invoice,
       code: `/${invoice._id}`,
+      currency: appSettings?.currency || 'USD',
+      currencySymbol: appSettings?.currencySymbol || '$',
+      currencyPosition: appSettings?.currencyPosition || 'before',
+      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
     let html = invoice.financialTemplate.htmlContent;
 

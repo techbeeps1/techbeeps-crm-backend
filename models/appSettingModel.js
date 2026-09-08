@@ -28,11 +28,18 @@ const standardPriceSchema={
 }
 
 const appSettingsSchema = new Schema({
-    language: { type: String, enum: ['en', 'es', 'fr', 'de'] },
-    currency: { type: String, enum: ['USD', 'EUR', 'GBP', 'INR'] },
+    language: { type: String, default: 'US English' },
+    country: { type: String, default: 'IN India' },
+    adminNotificationEmail: { type: String, default: '' },
+    timezone: { type: String, default: 'UTC +05:30 (Asia/Kolkata)' },
+    timezoneName: { type: String, default: 'Asia/Kolkata' },
+    currency: { type: String, default: 'USD' },
+    currencySymbol: { type: String, default: '$' },
+    currencyPosition: { type: String, default: 'before' },
+    currencyDecimals: { type: Number, default: 2 },
     emailTemplates: emailTemplateSchema,
-    standardPrice:standardPriceSchema
-});
+    standardPrice: standardPriceSchema
+}, { timestamps: true });
 
 const AppSettings = mongoose.model('AppSettings', appSettingsSchema);
 

@@ -8,6 +8,7 @@ const nodemailer = require('nodemailer');
 const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 const Email = require('../models/Email/email');
+const AppSettings = require('../models/appSettingModel');
 
 exports.invoice = async (req, res) => {
   try {
@@ -157,10 +158,15 @@ exports.DownloadInvoicePDF = async (req, res) => {
       return res.status(404).send('Invoice not found');
     }
     const company = await CompanyDetails.findOne();
+    const appSettings = await AppSettings.findOne();
     const data = {
       company: company,
       customer: invoice.customer,
       invoice: invoice,
+      currency: appSettings?.currency || 'USD',
+      currencySymbol: appSettings?.currencySymbol || '$',
+      currencyPosition: appSettings?.currencyPosition || 'before',
+      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
     let html = invoice.financialTemplate.htmlContent;
     const pdfBuffer = await generatePdf(html, data);
@@ -177,12 +183,20 @@ exports.DownloadInvoicePDF = async (req, res) => {
 };
 
 async function generatePdf(htmlContent, data) {
+  const sym = data.currencySymbol || '$';
+  const pos = data.currencyPosition || 'before';
+  const dec = data.currencyDecimals !== undefined ? data.currencyDecimals : 2;
+  const fmt = (num) => {
+    const val = Number(num || 0).toFixed(dec);
+    return pos === 'after' ? `${val} ${sym}` : `${sym} ${val}`;
+  };
+
   const itemsHtml = data.invoice.items.map(item => `
     <tr >
       <td style='padding:15px 0'>${item.description}</td>
       <td style='padding:15px 0'>${item.quantity}</td>
-      <td style='padding:15px 0'>${item.price}</td>
-      <td style='padding:15px 0'>${item.quantity * item.price}</td>
+      <td style='padding:15px 0'>${fmt(item.price)}</td>
+      <td style='padding:15px 0'>${fmt(item.quantity * item.price)}</td>
       <td style="padding: 15px 0;">${(item.btw)}%</td>
     </tr>
     
@@ -257,11 +271,16 @@ exports.createInvoicePDF = async (req, res) => {
     }
     let emailHtml = emailTemplate.htmlContent;
 
+    const appSettings = await AppSettings.findOne();
     const data = {
       company: company,
       customer: invoice.customer,
       invoice: invoice,
       code: `/${invoice._id}`,
+      currency: appSettings?.currency || 'USD',
+      currencySymbol: appSettings?.currencySymbol || '$',
+      currencyPosition: appSettings?.currencyPosition || 'before',
+      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
     let html = invoice.financialTemplate.htmlContent;
 
