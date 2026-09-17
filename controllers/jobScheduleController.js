@@ -5,12 +5,14 @@ const notes = require("../models/job/notes");
 //const FinancialProcess = require("../models/job/financialProcess");
 const Package = require('../models/PackageModel');
 const ValuationRooms = require("../models/Valuation/valuationRoomDetail");
+const FurnitureType = require("../models/Valuation/furnitureTypeModel");
 const Invoice = require("../models/invoice");
 const Finance = require("../models/finance");
+const ServiceType = require("../models/Valuation/serviceTypeModel");
 
 exports.jobSchedule = async (req, res) => {
   try {
-    const { date, customer, package, load, unload, knownAddress } = req.body;
+    const { date, customer, package, load, unload, knownAddress, services, priceAgree, hasElevator, unloadElevator } = req.body;
     const customerExists = await Customer.findById(customer);
     if (!customerExists) {
       return res.status(404).json({ message: 'Customer not found' });
@@ -19,7 +21,7 @@ exports.jobSchedule = async (req, res) => {
     if (!packageExists) {
       return res.status(404).json({ message: 'Package not found' });
     }
-    const newJobSchedule = new JobSchedule({ date, customer, package, load, unload, knownAddress });
+    const newJobSchedule = new JobSchedule({ date, customer, package, load, unload, knownAddress, services, priceAgree, hasElevator, unloadElevator });
     const savedJobSchedule = await newJobSchedule.save();
     res.status(201).json(newJobSchedule);
   } catch (error) {
@@ -43,6 +45,9 @@ exports.updateJobSchedule = async (req, res) => {
     jobSchedule.load = load || jobSchedule.load;
     jobSchedule.unload = unload || jobSchedule.unload;
     jobSchedule.knownAddress = knownAddress || jobSchedule.knownAddress;
+    if (req.body.services !== undefined) {
+      jobSchedule.services = req.body.services;
+    }
     if (offer) {
       if (!jobSchedule.offer.includes(offer)) {
         jobSchedule.offer.push(offer);
@@ -280,7 +285,7 @@ exports.getJobScheduleById = async (req, res) => {
         path: 'address',
         match: { addressType: 'head' },
       },
-    }).populate('package').populate({
+    }).populate('package').populate('services').populate({
       path: 'offer',
       populate: { path: 'customer' }
     }).populate({
@@ -324,9 +329,24 @@ exports.getJobScheduleById = async (req, res) => {
       .select("roomId roomTypeName name furnitureType inventoryItems assembledItems dismantledItems storageItems")
       .lean();
 
+    const allFurnitureList = await FurnitureType.find().select("_id furnitureTypeName isDisassambled").lean();
+    const furnitureMap = new Map();
+    allFurnitureList.forEach((f) => {
+      furnitureMap.set(f._id.toString(), f.isDisassambled);
+      if (f.furnitureTypeName) {
+        furnitureMap.set(f.furnitureTypeName.trim().toLowerCase(), f.isDisassambled);
+      }
+    });
+
     const data = rooms.map(({ roomId, _id , ...rest }) => ({
       _id: roomId,
       ...rest,
+      furnitureType: (rest.furnitureType || []).map((f) => ({
+        ...f,
+        isDisassambled: f.isDisassambled !== undefined
+          ? f.isDisassambled
+          : (furnitureMap.get(f._id?.toString()) ?? (f.furnitureTypeName ? furnitureMap.get(f.furnitureTypeName.trim().toLowerCase()) : false) ?? false),
+      })),
     }));
     jobSchedule.rooms = data;
 

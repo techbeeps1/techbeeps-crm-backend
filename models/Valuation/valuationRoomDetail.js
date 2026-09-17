@@ -15,6 +15,10 @@ const furnitureSchema = new Schema({
     icon: {
         type: String,
     },
+    isDisassambled: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const roomTypeSchema = new Schema({

@@ -164,7 +164,13 @@ exports.valuationMaster = async (req, res) => {
     job.relocation = relocationDetails;
     job.materials = materialData;
     job.services = services || job.services;
-    job.offer = finance._id;
+    if (finance && finance._id) {
+      if (!Array.isArray(job.offer)) {
+        job.offer = [finance._id];
+      } else if (!job.offer.some((id) => id && id.toString() === finance._id.toString())) {
+        job.offer.push(finance._id);
+      }
+    }
 
     // 9️⃣ **Save Valuation Rooms**
     try {
@@ -189,6 +195,7 @@ exports.valuationMaster = async (req, res) => {
     await job.save();
     return res.status(200).json({
       finance,
+      job,
       message: "Job schedule successfully updated",
     });
   } catch (error) {
