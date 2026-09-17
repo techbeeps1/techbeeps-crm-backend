@@ -258,26 +258,31 @@ async function startServer() {
     });
   }
 
+  function heartbeat() {
+    this.isAlive = true;
+  }
+
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((client) => {
+      if (client.isAlive === false) {
+        client.terminate();
+        notifyAboutOnlinePeople();
+        return;
+      }
+      client.isAlive = false;
+      client.ping();
+    });
+  }, 30000);
+
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
+
   wss.on('connection', (connection, req) => {
     connection.isAlive = true;
-    connection.timer = setInterval(() => {
-      connection.ping();
-      connection.deathTimer = setTimeout(() => {
-        connection.isAlive = false;
-        clearInterval(connection.timer);
-        connection.terminate();
-        notifyAboutOnlinePeople();
-        console.log('dead connection terminated');
-      }, 1000);
-    }, 5000);
-
-    connection.on('pong', () => {
-      clearTimeout(connection.deathTimer);
-    });
+    connection.on('pong', heartbeat);
 
     connection.on('close', () => {
-      clearInterval(connection.timer);
-      clearTimeout(connection.deathTimer);
       notifyAboutOnlinePeople();
     });
 

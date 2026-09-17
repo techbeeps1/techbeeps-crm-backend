@@ -3,8 +3,10 @@ const { ObjectId } = require("mongodb");
 const Customer = require("../models/customer");
 const notes = require("../models/job/notes");
 //const FinancialProcess = require("../models/job/financialProcess");
-const Package = require('../models/PackageModel')
+const Package = require('../models/PackageModel');
 const ValuationRooms = require("../models/Valuation/valuationRoomDetail");
+const Invoice = require("../models/invoice");
+const Finance = require("../models/finance");
 
 exports.jobSchedule = async (req, res) => {
   try {
@@ -278,27 +280,55 @@ exports.getJobScheduleById = async (req, res) => {
         path: 'address',
         match: { addressType: 'head' },
       },
-    }).populate('package').populate('offer').populate('invoice').populate({
+    }).populate('package').populate({
+      path: 'offer',
+      populate: { path: 'customer' }
+    }).populate({
+      path: 'invoice',
+      populate: { path: 'customer' }
+    }).populate({
       path: 'materials',
       populate: {
         path: 'material',
         select: 'name'
       }
-    }).lean();;
-  
+    }).lean();
+
     if (!jobSchedule) {
       return res.status(404).json({ message: 'Job schedule not found' });
     }
-    const rooms = await ValuationRooms.find({ jobId: id })
-  .select("roomId roomTypeName name furnitureType inventoryItems assembledItems dismantledItems storageItems")
-  .lean();
 
-const data = rooms.map(({ roomId, _id , ...rest }) => ({
-  _id: roomId,
-  ...rest,
-}));
-      jobSchedule.rooms = data;
-    
+    // Query all invoices linked to this job to ensure fresh and complete invoices with customer populated
+    const directInvoices = await Invoice.find({
+      $or: [
+        { _id: { $in: jobSchedule.invoice || [] } },
+        { job: id }
+      ]
+    }).populate('customer').sort({ createdAt: -1 }).lean();
+    if (directInvoices && directInvoices.length > 0) {
+      jobSchedule.invoice = directInvoices;
+    }
+
+    // Query all offers linked to this job
+    const directOffers = await Finance.find({
+      $or: [
+        { _id: { $in: jobSchedule.offer || [] } },
+        { job: id }
+      ]
+    }).populate('customer').sort({ createdAt: -1 }).lean();
+    if (directOffers && directOffers.length > 0) {
+      jobSchedule.offer = directOffers;
+    }
+
+    const rooms = await ValuationRooms.find({ jobId: id })
+      .select("roomId roomTypeName name furnitureType inventoryItems assembledItems dismantledItems storageItems")
+      .lean();
+
+    const data = rooms.map(({ roomId, _id , ...rest }) => ({
+      _id: roomId,
+      ...rest,
+    }));
+    jobSchedule.rooms = data;
 
     res.status(200).json(jobSchedule);
   } catch (error) {

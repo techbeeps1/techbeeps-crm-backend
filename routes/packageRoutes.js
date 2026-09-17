@@ -9,6 +9,7 @@ router.get('/', packageController.getAllPackages);
 router.get('/:id', packageController.getPackageById);
 
 router.post('/:id', packageController.updatePackage);
+router.put('/:id', packageController.updatePackage);
 
 router.delete('/:id', packageController.deletePackage);
 

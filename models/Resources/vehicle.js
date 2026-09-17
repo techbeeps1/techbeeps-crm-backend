@@ -10,10 +10,10 @@ const MaintenanceSchema = new mongoose.Schema({
 
 // Fuel Card Schema
 const FuelCardSchema = new mongoose.Schema({
-  supplier: { type: String},
-  cardNumber: { type: String, match: /^[0-9]{16}$/ },
-  cvc: { type: String, match: /^[0-9]{3}$/ },
-  pincode: { type: String, match: /^[0-9]{5,6}$/ },
+  supplier: { type: String },
+  cardNumber: { type: String },
+  cvc: { type: String },
+  pincode: { type: String },
 });
 
 // Vehicle Schema
@@ -33,7 +33,7 @@ const VehicleSchema = new mongoose.Schema({
   length: { type: Number },
   width: { type: Number},
   height: { type: Number},
-  contents: { type: Number },
+  contents: { type: mongoose.Schema.Types.Mixed },
   tailLiftLength: { type: Number},
   drawWeight: { type: Number },
   maintenance: { type: MaintenanceSchema },

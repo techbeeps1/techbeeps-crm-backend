@@ -48,13 +48,19 @@ exports.getPackageById = async (req, res) => {
 // Update a package by ID
 exports.updatePackage = async (req, res) => {
     try {
-        const updatedPackage = await Package.findByIdAndUpdate(req.params.id, req.body, { new: true });
-        if (!updatedPackage) {
+        const packageDoc = await Package.findById(req.params.id);
+        if (!packageDoc) {
             return res.status(404).json({ message: 'Package not found' });
         }
+        Object.keys(req.body).forEach((key) => {
+            packageDoc[key] = req.body[key];
+            packageDoc.markModified(key);
+        });
+        const updatedPackage = await packageDoc.save();
         return res.status(200).json(updatedPackage);
     } catch (error) {
-        return res.status(500).json({ message: 'Error updating package', error });
+        console.error('Error updating package:', error);
+        return res.status(500).json({ message: 'Error updating package', error: error.message });
     }
 };
 

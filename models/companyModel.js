@@ -11,6 +11,7 @@ const companyDetailsSchema = new mongoose.Schema({
   companyTaxNumber: { type: String },
   companyVatNumber: { type: String },
   companyRegNumber: { type: String },
+  logoUrl: { type: String },
 });
 
 module.exports = mongoose.model('CompanyDetails', companyDetailsSchema);

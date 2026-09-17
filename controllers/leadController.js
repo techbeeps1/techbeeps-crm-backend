@@ -1,67 +1,80 @@
+const mongoose = require('mongoose');
 const Lead = require("../models/lead");
 const Customer = require("../models/customer");
 const Address = require('../models/addressModel')
 
 exports.createLead = async (req, res) => {
-  const { _id, ...leadData } = req.body;
-  
+  try {
+    const { _id, ...leadData } = req.body;
 
- if(_id) {
+    // Only update if a valid ObjectId is explicitly provided
+    if (_id && mongoose.Types.ObjectId.isValid(_id)) {
+      const updatedLead = await Lead.findByIdAndUpdate(_id, leadData, { new: true });
+      if (updatedLead) {
+        return res.json({
+          success: true,
+          message: "Lead updated successfully",
+          data: updatedLead,
+        });
+      }
+    }
 
-  const updatedLead = await Lead.findByIdAndUpdate(_id, leadData, { new: true });
-  res.json({
-    success: true,
-    message: "Lead updated successfully",
-    data: updatedLead,
-  });
-
-
-
- }else {
-let lead = new Lead(leadData);
-  if (lead.firstName && lead.lastName && lead.email && lead.contact) {
-   
-   const doc = await lead.save();
-
-  res.json({
-    success: true,
-    message: "Lead created successfully",
-  });
-  }else {
-    res.status(400).json({ success: false, message: "Missing required fields" });
+    // Always create a new lead record
+    const lead = new Lead(leadData);
+    if (lead.firstName && lead.lastName && lead.email) {
+      const doc = await lead.save();
+      return res.json({
+        success: true,
+        message: "Lead created successfully",
+        data: doc,
+      });
+    } else {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+  } catch (error) {
+    console.error("Error creating lead:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to create lead" });
   }
- }
-
 };
 
 exports.leadList = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1; 
-    const pageSize = parseInt(req.query.pageSize) || 5; 
-    const sortField = 'firstName';
-    const pipeline = [
-      {
-        $sort: { [sortField]: 1 },
-      },
-      {
-        $skip: (page - 1) * pageSize,
-      },
-      { 
-        $limit: pageSize,
-      },
-    ];
-    const leadList = await Lead.aggregate(pipeline);
     const totalLeads = await Lead.countDocuments();
-  res.json({
-    success: true,
-    totalLeads:totalLeads,
-    currentPage: page,
-    totalPages: Math.ceil(totalLeads / pageSize),
-    leads: leadList,
-  });
+
+    // If pagination is explicitly requested
+    if (req.query.page || req.query.pageSize) {
+      const page = parseInt(req.query.page) || 1;
+      const pageSize = parseInt(req.query.pageSize) || 10;
+      const sortField = req.query.sortField || 'leadIndex';
+      const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+
+      const leadList = await Lead.find()
+        .sort({ [sortField]: sortOrder })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize);
+
+      return res.json({
+        success: true,
+        totalLeads: totalLeads,
+        currentPage: page,
+        totalPages: Math.ceil(totalLeads / pageSize),
+        leads: leadList,
+      });
+    }
+
+    // Default: return all leads sorted newest first (for frontend client-side pagination/search/stats)
+    const leadList = await Lead.find().sort({ leadIndex: -1 });
+
+    return res.json({
+      success: true,
+      totalLeads: totalLeads,
+      currentPage: 1,
+      totalPages: 1,
+      leads: leadList,
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 

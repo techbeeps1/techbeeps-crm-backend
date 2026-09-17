@@ -9,10 +9,47 @@ const EmailTemplate = require('../models/reporting');
 const Email = require('../models/Email/email');
 const jwt = require('jsonwebtoken');
 const AppSettings = require('../models/appSettingModel');
+const SalesGroup = require('../models/salesgroupModel');
+
+const sanitizeFinancePayload = async (data) => {
+  if (!data) return data;
+  const payload = { ...data };
+
+  if (Array.isArray(payload.items)) {
+    payload.items = await Promise.all(
+      payload.items.map(async (item) => {
+        const itemObj = { ...item };
+        if (itemObj.salesgroup) {
+          const sgVal = String(itemObj.salesgroup).trim();
+          const isValidId = /^[0-9a-fA-F]{24}$/.test(sgVal);
+          if (!isValidId) {
+            try {
+              const matched = await SalesGroup.findOne({
+                name: { $regex: new RegExp(`^${sgVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+              });
+              if (matched) {
+                itemObj.salesgroup = matched._id;
+              } else {
+                delete itemObj.salesgroup;
+              }
+            } catch (err) {
+              delete itemObj.salesgroup;
+            }
+          }
+        } else {
+          delete itemObj.salesgroup;
+        }
+        return itemObj;
+      })
+    );
+  }
+  return payload;
+};
 
 exports.finance = async (req, res) => {
   try {
-    let finance = new Finance(req.body);
+    const sanitizedBody = await sanitizeFinancePayload(req.body);
+    let finance = new Finance(sanitizedBody);
     const financeData = await finance.save();
     res.json(financeData);
   } catch (error) {
@@ -339,7 +376,8 @@ async function generatePdf(htmlContent, data) {
     const page = await browser.newPage();
 
     await page.setContent(populatedHtml, {
-      waitUntil: "networkidle0",
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
     });
 
     const pdfData = await page.pdf({

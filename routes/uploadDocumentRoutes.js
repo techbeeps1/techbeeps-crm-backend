@@ -18,14 +18,47 @@ const s3Client = new S3Client({
   },
 });
 
-// Multer memory storage to access file.buffer
+// Multer memory storage with 10MB file size limit
 const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024; // 10 MB
 
-router.post("/uploadDocument", upload.single("file"), async (req, res) => {
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_FILE_SIZE_BYTES,
+  },
+});
+
+// Middleware wrapper to handle Multer errors (e.g. LIMIT_FILE_SIZE) cleanly
+const handleMulterUpload = (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({
+          status: false,
+          msg: `File size exceeds the maximum allowed limit of ${MAX_FILE_SIZE_MB} MB. Please select a smaller file.`,
+        });
+      }
+      return res.status(400).json({ status: false, msg: err.message });
+    } else if (err) {
+      return res.status(400).json({ status: false, msg: err.message });
+    }
+    next();
+  });
+};
+
+router.post("/uploadDocument", handleMulterUpload, async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ msg: "No file uploaded" });
+      return res.status(400).json({ status: false, msg: "No file uploaded" });
+    }
+
+    if (req.file.size > MAX_FILE_SIZE_BYTES) {
+      return res.status(400).json({
+        status: false,
+        msg: `File size exceeds the maximum allowed limit of ${MAX_FILE_SIZE_MB} MB`,
+      });
     }
 
    const fileName = `documents/${Date.now()}-${req.file.originalname}`;

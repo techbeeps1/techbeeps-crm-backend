@@ -136,13 +136,31 @@ exports.updateStorage = async (req, res) => {
                 return true; // Keep other valid values
             })
         );
-    const updatedStorage = await Storage.findByIdAndUpdate(
-  id,
-  filteredBody,
-  {
-    returnDocument: "after"
-  }
-);
+
+        if (Array.isArray(filteredBody.events)) {
+            filteredBody.events = filteredBody.events.map(event => ({
+                ...event,
+                storageLocation: event.storageLocation || null,
+                loadedByEmployee: event.loadedByEmployee || null,
+                ReleasedByEmployee: event.ReleasedByEmployee || null,
+                loadedOn: event.loadedOn || null,
+                ReleasedOn: event.ReleasedOn || null
+            }));
+        }
+
+        if (Array.isArray(filteredBody.costAction)) {
+            filteredBody.costAction = filteredBody.costAction.filter(
+                (action) => action && typeof action === 'object' && !Array.isArray(action) && (action.description || action.price !== undefined || action.quantity !== undefined || action._id)
+            );
+        }
+
+        const updatedStorage = await Storage.findByIdAndUpdate(
+            id,
+            filteredBody,
+            {
+                returnDocument: "after"
+            }
+        );
         if (!updatedStorage) {
             return res.status(404).json({
                 success: false,
@@ -174,11 +192,37 @@ exports.loadingUnloading = async (req, res) => {
                 message: 'Storage not found',
             });
         }
-        if (costAction) {
-            storage.costAction.push(costAction);
+
+        // Clean up any corrupted costAction entries in existing storage document
+        if (Array.isArray(storage.costAction)) {
+            storage.costAction = storage.costAction.filter(
+                (action) => action && typeof action === 'object' && !Array.isArray(action) && (action.description || action.price !== undefined || action.quantity !== undefined || action._id)
+            );
+        } else {
+            storage.costAction = [];
         }
+
+        // Add new valid costAction if provided
+        if (costAction) {
+            const actionsToAdd = Array.isArray(costAction) ? costAction : [costAction];
+            actionsToAdd.forEach((action) => {
+                if (action && typeof action === 'object' && !Array.isArray(action)) {
+                    if (action.description || action.price !== undefined || action.quantity !== undefined || action.actionDate) {
+                        storage.costAction.push(action);
+                    }
+                }
+            });
+        }
+
         if (Array.isArray(events)) {
-            storage.events = events;
+            storage.events = events.map(event => ({
+                ...event,
+                storageLocation: event.storageLocation || null,
+                loadedByEmployee: event.loadedByEmployee || null,
+                ReleasedByEmployee: event.ReleasedByEmployee || null,
+                loadedOn: event.loadedOn || null,
+                ReleasedOn: event.ReleasedOn || null
+            }));
         }
         if (percentageFill !== undefined) {
             storage.percentageFill = percentageFill;
@@ -338,43 +382,55 @@ exports.sendInvoicePDF = async (req, res) => {
             currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
         };
 
-        let html = pdfTemplate.htmlContent;
+        let html = pdfTemplate ? pdfTemplate.htmlContent : (emailTemplate.htmlContent || '<div>Invoice</div>');
 
-        const pdfBuffer = await generatePdf(html, data)
+        const pdfBuffer = await generatePdf(html, data);
 
         emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
             return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
         });
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+        if (!storage.customer?.email) {
+            return res.status(200).send('Invoice generated. (Storage has no customer email to send to).');
+        }
 
-        const mailOptions = {
-            from: process.env.SMTP_USER,
-            to: storage.customer?.email,
-            subject: `Invoice from ${company.companyName} for warehouse Charges`,
-            html: emailHtml,
-            attachments: [{
-                filename: 'Invoice.pdf',
-                content: pdfBuffer,
-                contentType: 'application/pdf'
-            }]
-        };
-        await transporter.sendMail(mailOptions);
-        res.status(200).send('Invoice send successfully');
+        if (!process.env.SMTP_USER) {
+            return res.status(200).send('Invoice generated. (SMTP is not configured).');
+        }
+
+        try {
+            const transporter = nodemailer.createTransport({
+                host: process.env.SMTP_HOST || 'smtp.gmail.com',
+                port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
+                secure: false,
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                },
+            });
+
+            const mailOptions = {
+                from: process.env.SMTP_USER,
+                to: storage.customer.email,
+                subject: `Invoice from ${company.companyName || 'Warehouse'} for warehouse Charges`,
+                html: emailHtml,
+                attachments: [{
+                    filename: 'Invoice.pdf',
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
+                }]
+            };
+            await transporter.sendMail(mailOptions);
+            res.status(200).send('Invoice sent successfully');
+        } catch (mailErr) {
+            console.warn("Mail sending warning:", mailErr.message);
+            res.status(200).send(`Storage finalized. Email notice: ${mailErr.message}`);
+        }
     } catch (error) {
         console.error("Error generating or sending PDF:", error);
-        res.status(500).send("Error generating or sending PDF");
+        res.status(500).send(error?.message || "Error generating or sending PDF");
     }
 };
-
 
 async function generatePdf(htmlContent, data) {
   const sym = data.currencySymbol || '$';
@@ -429,7 +485,7 @@ async function generatePdf(htmlContent, data) {
     </table>
   `;
 
-  const populatedHtml = htmlContent.replace(
+  const populatedHtml = (htmlContent || "").replace(
     /{{\s*(\w+(\.\w+)*)\s*}}/g,
     (match, key) => {
       if (key === "items") {
@@ -447,7 +503,7 @@ async function generatePdf(htmlContent, data) {
   let browser;
 
   try {
-    const isLocal = process.env.NODE_ENV === "development";
+    const isLocal = process.env.NODE_ENV === "development" || !process.env.NODE_ENV || process.platform === "win32";
 
     let launchOptions;
 
@@ -457,6 +513,12 @@ async function generatePdf(htmlContent, data) {
         executablePath:
           "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu'
+        ]
       };
     } else {
       // AWS Lambda / serverless
@@ -472,10 +534,11 @@ async function generatePdf(htmlContent, data) {
     const page = await browser.newPage();
 
     await page.setContent(populatedHtml, {
-      waitUntil: "networkidle0",
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
     });
 
-  const pdfData = await page.pdf({
+    const pdfData = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: {
@@ -492,5 +555,4 @@ async function generatePdf(htmlContent, data) {
       await browser.close();
     }
   }
-
 }

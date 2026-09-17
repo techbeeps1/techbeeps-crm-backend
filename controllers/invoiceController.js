@@ -9,11 +9,60 @@ const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 const Email = require('../models/Email/email');
 const AppSettings = require('../models/appSettingModel');
+const SalesGroup = require('../models/salesgroupModel');
+
+const sanitizeInvoicePayload = async (data) => {
+  if (!data) return data;
+  const payload = { ...data };
+
+  if (Array.isArray(payload.items)) {
+    payload.items = await Promise.all(
+      payload.items.map(async (item) => {
+        const itemObj = { ...item };
+        if (itemObj.salesgroup) {
+          const sgVal = String(itemObj.salesgroup).trim();
+          const isValidId = /^[0-9a-fA-F]{24}$/.test(sgVal);
+          if (!isValidId) {
+            try {
+              const matched = await SalesGroup.findOne({
+                name: { $regex: new RegExp(`^${sgVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+              });
+              if (matched) {
+                itemObj.salesgroup = matched._id;
+              } else {
+                delete itemObj.salesgroup;
+              }
+            } catch (err) {
+              delete itemObj.salesgroup;
+            }
+          }
+        } else {
+          delete itemObj.salesgroup;
+        }
+        return itemObj;
+      })
+    );
+  }
+  return payload;
+};
 
 exports.invoice = async (req, res) => {
   try {
-    const newInvoice = new Invoice(req.body);
+    const sanitizedBody = await sanitizeInvoicePayload(req.body);
+    const newInvoice = new Invoice(sanitizedBody);
     const savedInvoice = await newInvoice.save();
+
+    if (req.body.job) {
+      try {
+        const JobSchedule = require('../models/jobSchedule');
+        await JobSchedule.findByIdAndUpdate(req.body.job, {
+          $addToSet: { invoice: savedInvoice._id }
+        });
+      } catch (jobErr) {
+        console.warn('Failed to auto-link invoice to job schedule:', jobErr);
+      }
+    }
+
     res.status(201).json(savedInvoice);
   } catch (error) {
     res.status(500).json({
@@ -25,9 +74,9 @@ exports.invoice = async (req, res) => {
 
 exports.updateInvoice = async (req, res) => {
   const { id } = req.params; // Get the invoice ID from request parameters
-  const updatedData = req.body; // Get the updated data from request body
   try {
-    const updatedInvoice = await Invoice.findByIdAndUpdate(id, updatedData, {
+    const sanitizedData = await sanitizeInvoicePayload(req.body);
+    const updatedInvoice = await Invoice.findByIdAndUpdate(id, sanitizedData, {
       new: true, // Return the updated document
     });
     if (!updatedInvoice) {
@@ -232,7 +281,7 @@ async function generatePdf(htmlContent, data) {
 
     browser = await puppeteer.launch(launchOptions);
   const page = await browser.newPage();
-  await page.setContent(populatedHtml, { waitUntil: 'networkidle0' });
+  await page.setContent(populatedHtml, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
 
   const pdfData = await page.pdf({

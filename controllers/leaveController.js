@@ -14,6 +14,44 @@ const mapLeaveTypeToField = (type) => {
   return 'annual';
 };
 
+// Helper to check if caller has Admin/HR privileges
+const isCallerAdmin = (req) => {
+  const role = (
+    req.user?.role ||
+    req.user?.user?.role ||
+    ''
+  ).trim().toLowerCase();
+  return role === 'admin' || role === 'superadmin' || role === 'hr' || role === 'manager';
+};
+
+// Robust helper to check admin privileges with DB fallback if token role is missing
+const checkAdminPrivilege = async (req) => {
+  if (isCallerAdmin(req)) return true;
+  const uid = getCallerId(req);
+  if (uid) {
+    try {
+      const userDoc = await User.findById(uid).select('role');
+      const r = (userDoc?.role || '').trim().toLowerCase();
+      return r === 'admin' || r === 'superadmin' || r === 'hr' || r === 'manager';
+    } catch (e) {
+      return false;
+    }
+  }
+  return false;
+};
+
+// Helper to get authenticated user ID
+const getCallerId = (req) => {
+  return (
+    req.user?.id ||
+    req.user?.userId ||
+    req.user?._id ||
+    req.user?.user?.id ||
+    req.user?.user?.userId ||
+    req.user?.user?._id
+  );
+};
+
 // 1. Submit a new leave request
 exports.createLeaveRequest = async (req, res) => {
   try {
@@ -24,16 +62,17 @@ exports.createLeaveRequest = async (req, res) => {
       endDate,
       totalDays,
       reason,
-      employeeId: requestedEmployeeId,
-      employeeName: requestedEmployeeName,
     } = req.body;
 
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserRole = req.user?.role;
-    const currentUserName = req.user?.username || req.user?.name;
+    const currentUserId = getCallerId(req);
+    const isAdmin = await checkAdminPrivilege(req);
+    const currentUserName = req.user?.username || req.user?.name || req.user?.user?.username;
 
-    // Determine target employee
-    const targetEmployeeId = (currentUserRole === 'Admin' && requestedEmployeeId)
+    const requestedEmployeeId = req.body.employeeId || req.body.requestedEmployeeId;
+    const requestedEmployeeName = req.body.employeeName || req.body.requestedEmployeeName;
+
+    // Determine target employee: Admin can apply for any employee; non-admin applies for self
+    const targetEmployeeId = (isAdmin && requestedEmployeeId)
       ? requestedEmployeeId
       : currentUserId;
 
@@ -162,9 +201,8 @@ exports.createLeaveRequest = async (req, res) => {
 // 2. Get list of leave requests (Admins get all, Staff gets their own)
 exports.getLeaveRequests = async (req, res) => {
   try {
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserRole = req.user?.role;
-    const isAdmin = currentUserRole === 'Admin';
+    const currentUserId = getCallerId(req);
+    const isAdmin = await checkAdminPrivilege(req);
 
     const { status, year, employeeId } = req.query;
     const filter = {};
@@ -172,7 +210,7 @@ exports.getLeaveRequests = async (req, res) => {
     if (!isAdmin) {
       // Staff / Agent only see their own requests
       filter.employeeId = currentUserId;
-    } else if (employeeId) {
+    } else if (employeeId && employeeId !== 'all') {
       filter.employeeId = employeeId;
     }
 
@@ -201,14 +239,13 @@ exports.getLeaveRequests = async (req, res) => {
     return res.status(500).json({ error: err.message || 'Server error fetching leave requests' });
   }
 };
-
 // 3. Admin approve or reject leave request
 exports.updateLeaveStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, reviewerComment } = req.body;
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserName = req.user?.username || req.user?.name || 'Admin';
+    const currentUserId = getCallerId(req);
+    const currentUserName = req.user?.username || req.user?.name || req.user?.user?.username || 'Admin';
 
     if (!['Approved', 'Rejected', 'Cancelled'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
@@ -250,53 +287,45 @@ exports.updateLeaveStatus = async (req, res) => {
       });
     }
 
-    const paidDays = leaveReq.paidDays !== undefined ? leaveReq.paidDays : leaveDays;
+    const paidDays = leaveReq.paidDays !== undefined ? leaveReq.paidDays : (leaveReq.totalDays || 1);
     const unpaidDays = leaveReq.unpaidDays !== undefined ? leaveReq.unpaidDays : 0;
 
-    // If becoming Approved from another status: add to used and unpaid
     if (status === 'Approved' && prevStatus !== 'Approved') {
       if (paidDays > 0) {
-        balance.usedDays = Math.max(0, (balance.usedDays || 0) + paidDays);
+        balance.usedDays = (balance.usedDays || 0) + paidDays;
         if (!balance.usedBreakdown) balance.usedBreakdown = {};
-        balance.usedBreakdown[breakdownField] = Math.max(
-          0,
-          (balance.usedBreakdown[breakdownField] || 0) + paidDays
-        );
+        balance.usedBreakdown[breakdownField] = (balance.usedBreakdown[breakdownField] || 0) + paidDays;
       }
       if (unpaidDays > 0) {
-        balance.unpaidDays = Math.max(0, (balance.unpaidDays || 0) + unpaidDays);
+        balance.unpaidDays = (balance.unpaidDays || 0) + unpaidDays;
         if (!balance.usedBreakdown) balance.usedBreakdown = {};
-        balance.usedBreakdown.unpaid = Math.max(
-          0,
-          (balance.usedBreakdown.unpaid || 0) + unpaidDays
-        );
+        balance.usedBreakdown.unpaid = (balance.usedBreakdown.unpaid || 0) + unpaidDays;
       }
       await balance.save();
-    }
-
-    // If previously Approved and now changed to Rejected or Cancelled: rollback
-    if (prevStatus === 'Approved' && status !== 'Approved') {
+    } else if (prevStatus === 'Approved' && status !== 'Approved') {
       if (paidDays > 0) {
         balance.usedDays = Math.max(0, (balance.usedDays || 0) - paidDays);
-        if (!balance.usedBreakdown) balance.usedBreakdown = {};
-        balance.usedBreakdown[breakdownField] = Math.max(
-          0,
-          (balance.usedBreakdown[breakdownField] || 0) - paidDays
-        );
+        if (balance.usedBreakdown) {
+          balance.usedBreakdown[breakdownField] = Math.max(
+            0,
+            (balance.usedBreakdown[breakdownField] || 0) - paidDays
+          );
+        }
       }
       if (unpaidDays > 0) {
         balance.unpaidDays = Math.max(0, (balance.unpaidDays || 0) - unpaidDays);
-        if (!balance.usedBreakdown) balance.usedBreakdown = {};
-        balance.usedBreakdown.unpaid = Math.max(
-          0,
-          (balance.usedBreakdown.unpaid || 0) - unpaidDays
-        );
+        if (balance.usedBreakdown) {
+          balance.usedBreakdown.unpaid = Math.max(
+            0,
+            (balance.usedBreakdown.unpaid || 0) - unpaidDays
+          );
+        }
       }
       await balance.save();
     }
 
     return res.status(200).json({
-      message: `Leave request has been ${status.toLowerCase()} successfully`,
+      message: `Leave request ${status.toLowerCase()} successfully`,
       data: leaveReq,
     });
   } catch (err) {
@@ -309,9 +338,8 @@ exports.updateLeaveStatus = async (req, res) => {
 exports.deleteLeaveRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserRole = req.user?.role;
-    const isAdmin = currentUserRole === 'Admin';
+    const currentUserId = getCallerId(req);
+    const isAdmin = await checkAdminPrivilege(req);
 
     const leaveReq = await LeaveRequest.findById(id);
     if (!leaveReq) {
@@ -371,18 +399,17 @@ exports.deleteLeaveRequest = async (req, res) => {
 // 5. Get Leave Balances / Leave Cards
 exports.getLeaveBalances = async (req, res) => {
   try {
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserRole = req.user?.role;
-    const isAdmin = currentUserRole === 'Admin';
+    const currentUserId = getCallerId(req);
+    const isAdmin = await checkAdminPrivilege(req);
     const year = parseInt(req.query.year) || new Date().getFullYear();
 
-    if (!isAdmin) {
-      // Staff only sees their own leave card
-      let balance = await LeaveBalance.findOne({ employeeId: currentUserId, year });
+    if (!isAdmin || (req.query.employeeId && req.query.employeeId !== 'all')) {
+      const targetEmpId = (!isAdmin) ? currentUserId : req.query.employeeId;
+      let balance = await LeaveBalance.findOne({ employeeId: targetEmpId, year });
       if (!balance) {
-        const user = await User.findById(currentUserId);
+        const user = await User.findById(targetEmpId);
         balance = new LeaveBalance({
-          employeeId: currentUserId,
+          employeeId: targetEmpId,
           employeeName: user?.username || 'Staff',
           year,
           annualEntitlement: 12,
@@ -393,7 +420,7 @@ exports.getLeaveBalances = async (req, res) => {
       }
 
       const pendingRequests = await LeaveRequest.find({
-        employeeId: currentUserId,
+        employeeId: targetEmpId,
         status: 'Pending',
       });
       const pendingDays = pendingRequests.reduce((acc, r) => acc + (r.totalDays || 0), 0);
@@ -412,8 +439,8 @@ exports.getLeaveBalances = async (req, res) => {
     }
 
     // Admin sees all employees' Leave Cards (or single employee if employeeId specified)
-    const empFilter = { role: { $in: ['Staff', 'Agent', 'Admin'] } };
-    if (req.query.employeeId) {
+    const empFilter = {};
+    if (req.query.employeeId && req.query.employeeId !== 'all') {
       empFilter._id = req.query.employeeId;
     }
     const employees = await User.find(empFilter).select(
@@ -502,9 +529,8 @@ exports.updateLeaveBalance = async (req, res) => {
 // 7. Summary metrics (Total pending, approved this month, on leave today)
 exports.getLeaveSummary = async (req, res) => {
   try {
-    const currentUserId = req.user?.id || req.user?.userId || req.user?._id;
-    const currentUserRole = req.user?.role;
-    const isAdmin = currentUserRole === 'Admin';
+    const currentUserId = getCallerId(req);
+    const isAdmin = await checkAdminPrivilege(req);
 
     const baseFilter = isAdmin ? {} : { employeeId: currentUserId };
 

@@ -81,6 +81,8 @@ const loginUser = async (req, res) => {
       },
       userId: user._id,
       id: user._id,
+      role: user.role,
+      access: userAccess,
       username: user.username,
     };
     jwt.sign(

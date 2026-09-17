@@ -9,6 +9,7 @@ router.get('/vehicles', vehicleController.getAllVehicles);
 router.get('/vehicles/:id', vehicleController.getVehicleById);
 
 router.post('/vehicles/:id', vehicleController.updateVehicleById);
+router.put('/vehicles/:id', vehicleController.updateVehicleById);
 
 router.delete('/vehicles/:id', vehicleController.deleteVehicleById);
 

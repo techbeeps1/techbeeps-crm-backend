@@ -34,10 +34,10 @@ server.use((req, res, next) => {
   next();
 });
 
-server.use(express.static('uploads'));
+server.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+server.use(express.static(path.join(__dirname, 'uploads')));
 server.use(bodyParser.json({ limit: '50mb' }));
 server.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
-// server.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const emailRoutes = require("./routes/emailRoutes");
 const userRoutes = require("./routes/userRoutes");
