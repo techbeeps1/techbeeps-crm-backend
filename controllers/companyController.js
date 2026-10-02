@@ -50,10 +50,11 @@ exports.uploadLogo = async (req, res) => {
       fs.writeFileSync(path.join(uploadsDir, 'logo.png'), req.file.buffer);
       fileUrl = `/uploads/${localFileName}`;
 
-      // If R2 credentials exist, also upload to Cloudflare R2
+      // If R2 credentials exist, upload to Cloudflare R2 cloud storage
       if (s3Client && process.env.R2_BUCKET_NAME) {
         try {
-          const r2FileName = `logos/${Date.now()}_${req.file.originalname}`;
+          const sanitizedOriginalName = (req.file.originalname || 'logo.png').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const r2FileName = `logos/${Date.now()}_${sanitizedOriginalName}`;
           const uploadParams = {
             Bucket: process.env.R2_BUCKET_NAME,
             Key: r2FileName,

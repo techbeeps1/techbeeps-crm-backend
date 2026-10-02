@@ -40,11 +40,44 @@ exports.sendOtp = async (req, res) => {
     }
     try {
         await Otp.findOneAndUpdate({ email }, { otp }, { upsert: true });
+        const company = await CompanyDetails.findOne();
+        const emailTemplate = await EmailTemplate.findOne({
+            $or: [
+                { name: /OTP/i },
+                { _id: '6a10498d6560cd48279e6846' }
+            ]
+        });
+
+        let emailHtml = '';
+        if (emailTemplate) {
+            emailHtml = renderEmailTemplate(emailTemplate.htmlContent, {
+                company,
+                customer: user || { firstName: email.split('@')[0], name: user?.username || email.split('@')[0] },
+                user: user || { username: email.split('@')[0], email },
+                otp,
+                data: { otp },
+                extraData: { otp }
+            });
+        } else {
+            emailHtml = `
+              <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <h2 style="color: #0f172a; text-align: center;">Verification Code (OTP)</h2>
+                <p>Hello,</p>
+                <p>Your one-time verification code is:</p>
+                <div style="text-align: center; margin: 24px 0;">
+                  <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #3c50e0; background: #f1f5f9; padding: 12px 24px; border-radius: 6px;">${otp}</span>
+                </div>
+                <p style="font-size: 12px; color: #64748b;">This code expires in 10 minutes. If you did not request this, please ignore this email.</p>
+              </div>
+            `;
+        }
+
         const mailOptions = {
             from: process.env.SMTP_USER,
             to: email,
-            subject: 'Your OTP Code',
-            text: `Your OTP code is: ${otp}`,
+            subject: 'Your Verification Code (OTP)',
+            html: emailHtml,
+            text: `Your OTP verification code is: ${otp}`,
         };
         await transporter.sendMail(mailOptions);
         res.status(200).json({ message: 'OTP sent to your email' });
@@ -69,6 +102,8 @@ exports.verifyOtp = async (req, res) => {
 };
 
 
+const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
+
 exports.sendEmail = async (req, res) => {
     const { emailTemplateId, extraData, job, subject } = req.body;
     try {
@@ -76,10 +111,30 @@ exports.sendEmail = async (req, res) => {
         if (!company) {
             return res.status(404).send('Company details not found');
         }
-        const emailTemplate = await EmailTemplate.findById(emailTemplateId);
-        if (!emailTemplate) {
-            return res.status(404).send('Email template not found');
+        const mongoose = require('mongoose');
+        const AppSettings = require('../models/appSettingModel');
+        const appSettings = await AppSettings.findOne();
+
+        let emailTemplate = null;
+        if (emailTemplateId && mongoose.Types.ObjectId.isValid(emailTemplateId)) {
+            emailTemplate = await EmailTemplate.findById(emailTemplateId);
         }
+        if (!emailTemplate && subject) {
+            if (/appointment|reschedule|planning/i.test(subject)) {
+                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.appointment)
+                    || await EmailTemplate.findById(appSettings?.emailTemplates?.rescheduleAppointment);
+            } else if (/quote|proposal/i.test(subject)) {
+                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.quote);
+            } else if (/invoice|bill/i.test(subject)) {
+                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.invoice);
+            } else if (/welcome|employee/i.test(subject)) {
+                emailTemplate = await EmailTemplate.findById('67482f4178cf7071e2d8465b');
+            }
+        }
+        if (!emailTemplate) {
+            emailTemplate = await EmailTemplate.findOne();
+        }
+
 
         const jobDetail = await jobSchedule.findById(job).populate('customer');
         if(job){
@@ -88,15 +143,12 @@ exports.sendEmail = async (req, res) => {
             }
         }
 
-        let emailHtml = emailTemplate.htmlContent;
-        const data = {
-            company: company,
-            customer: job ? jobDetail.customer : extraData || null,
-            job: job ? jobDetail : null,
+        const emailHtml = renderEmailTemplate(emailTemplate.htmlContent, {
+            company,
+            customer: job ? jobDetail.customer : extraData,
+            job: jobDetail,
+            extraData,
             data: extraData,
-        };
-        emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-            return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
         });
       const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,

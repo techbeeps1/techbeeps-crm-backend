@@ -10,6 +10,7 @@ const puppeteer = require('puppeteer-core');
 const Email = require('../models/Email/email');
 const AppSettings = require('../models/appSettingModel');
 const SalesGroup = require('../models/salesgroupModel');
+const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
 
 const sanitizeInvoicePayload = async (data) => {
   if (!data) return data;
@@ -369,8 +370,13 @@ exports.createInvoicePDF = async (req, res) => {
 
     const pdfBuffer = !content && await generatePdf(html, data) || null;
 
-    emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-      return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+    emailHtml = renderEmailTemplate(emailHtml || '', {
+      company,
+      customer: invoice.customer || {},
+      invoice,
+      code: `/${invoice._id}`,
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
     });
 
  const transporter = nodemailer.createTransport({

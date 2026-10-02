@@ -1,7 +1,9 @@
 const Task = require('../models/taskModel');
-const User = require('../models/user')
+const User = require('../models/user');
 const nodemailer = require('nodemailer');
 const EmailTemplate = require('../models/reporting');
+const CompanyDetails = require('../models/companyModel');
+const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
 
 // Create a new task
 // Create a transporter for Nodemailer
@@ -51,20 +53,20 @@ exports.createTask = async (req, res) => {
         if (teamMembers && Array.isArray(teamMembers) && teamMembers.length > 0) {
             try {
                 const users = await User.find({ '_id': { $in: teamMembers } });
+                const company = await CompanyDetails.findOne();
                 const emailTemplate = await EmailTemplate.findById("677bc309a951e7a4ba54e249");
                 if (emailTemplate && users && users.length > 0) {
-                    let emailHtml = emailTemplate.htmlContent;
+                    let rawHtml = emailTemplate.htmlContent;
                     const teamMembersList = users.map(user => `<li>${user.username} (${user.email})</li>`).join('');
-                    emailHtml = emailHtml.replace(/{{\s*task.teamMembers\s*}}/g, `<ul>${teamMembersList}</ul>`);
+                    rawHtml = rawHtml.replace(/{{\s*task.teamMembers\s*}}/g, `<ul>${teamMembersList}</ul>`);
 
                     for (const user of users) {
-                        let data = {
-                            user: user,
-                            task: task
-                        };
-                        let userEmailHtml = emailHtml;
-                        userEmailHtml = userEmailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-                            return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+                        const userEmailHtml = renderEmailTemplate(rawHtml, {
+                            company,
+                            customer: user,
+                            user,
+                            task,
+                            data: { user, task },
                         });
                         const mailOptions = {
                             from: process.env.SMTP_USER,

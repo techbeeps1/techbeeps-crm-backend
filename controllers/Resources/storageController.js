@@ -3,6 +3,7 @@ const CompanyDetails = require("../../models/companyModel");
 const EmailTemplate = require('../../models/reporting');
 const financial = require('../../models/documentTemplateModel');
 const AppSettings = require('../../models/appSettingModel');
+const { renderEmailTemplate } = require('../../utils/emailTemplateUtil');
 
 const nodemailer = require('nodemailer');
 
@@ -374,15 +375,26 @@ exports.sendInvoicePDF = async (req, res) => {
         }
         const pdfTemplate = await financial.findById(financialTemplate);
 
-        const emailTemplate = await EmailTemplate.findById(emailTemplateId);
+        const appSettings = await AppSettings.findOne();
 
+        let emailTemplate = null;
+        if (emailTemplateId && mongoose.Types.ObjectId.isValid(emailTemplateId)) {
+            emailTemplate = await EmailTemplate.findById(emailTemplateId);
+        }
+        if (!emailTemplate && appSettings?.emailTemplates?.storageInovice && mongoose.Types.ObjectId.isValid(appSettings.emailTemplates.storageInovice)) {
+            emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.storageInovice);
+        }
         if (!emailTemplate) {
-            return res.status(404).send('Email template not found');
+            emailTemplate = await EmailTemplate.findOne({
+                $or: [
+                    { name: /storage/i },
+                    { _id: '67611dd3ca48493a174f71a9' }
+                ]
+            }) || await EmailTemplate.findOne();
         }
 
-        let emailHtml = emailTemplate.htmlContent;
+        let emailHtml = emailTemplate?.htmlContent || '<div>Invoice for storage rental</div>';
 
-        const appSettings = await AppSettings.findOne();
         const fallbackCompany = {
             companyName: 'Universal Movers B.V.',
             companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
@@ -410,8 +422,16 @@ exports.sendInvoicePDF = async (req, res) => {
 
         const pdfBuffer = await generatePdf(html, data);
 
-        emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-            return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+        emailHtml = renderEmailTemplate(emailHtml || '', {
+            company,
+            customer: storage.customer || {},
+            storage,
+            invoice: {
+                total: storage.total,
+                date: new Date().toLocaleDateString(),
+            },
+            currency: appSettings?.currency || 'EUR',
+            currencySymbol: appSettings?.currencySymbol || '€',
         });
 
         if (!storage.customer?.email) {

@@ -10,6 +10,7 @@ const Email = require('../models/Email/email');
 const jwt = require('jsonwebtoken');
 const AppSettings = require('../models/appSettingModel');
 const SalesGroup = require('../models/salesgroupModel');
+const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
 
 const sanitizeFinancePayload = async (data) => {
   if (!data) return data;
@@ -539,11 +540,14 @@ exports.createInvoicePDF = async (req, res) => {
       }
     }
 
-    emailHtml = (emailHtml || '')
-      .replace(/\$\{[^}]*\}/g, '')
-      .replace(/{{\s*([\w.]+)\s*}}/g, (match, key) => {
-        return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
-      });
+    emailHtml = renderEmailTemplate(emailHtml || '', {
+      company,
+      customer: invoice.customer || {},
+      invoice,
+      code: `/${invoice._id}`,
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
+    });
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
