@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const AppSettings = require('../models/appSettingModel');
+const SalesGroup = require('../models/salesgroupModel');
 const nodemailer = require('nodemailer');
 
 router.get('/available-settings', async (req, res) => {
@@ -8,13 +9,13 @@ router.get('/available-settings', async (req, res) => {
         let appSettings = await AppSettings.findOne();
         if (!appSettings) {
             appSettings = new AppSettings({
-                language: 'US English',
-                country: 'IN India',
+                language: 'Dutch',
+                country: 'NL Netherlands',
                 adminNotificationEmail: 'mprofessionalwfh@gmail.com',
-                timezone: 'UTC +05:30 (Asia/Kolkata)',
-                timezoneName: 'Asia/Kolkata',
-                currency: 'USD',
-                currencySymbol: '$',
+                timezone: 'UTC +01:00 (Europe/Amsterdam)',
+                timezoneName: 'Europe/Amsterdam',
+                currency: 'EUR',
+                currencySymbol: '€',
                 currencyPosition: 'before',
                 currencyDecimals: 2,
                 emailTemplates: {
@@ -88,6 +89,16 @@ router.post('/save-settings', async (req, res) => {
         if (standardPrice !== undefined) appSettings.standardPrice = standardPrice;
 
         await appSettings.save();
+
+        if (standardPrice?.propertySurcharges && typeof standardPrice.propertySurcharges === 'object') {
+            for (const [propName, sVal] of Object.entries(standardPrice.propertySurcharges)) {
+                await SalesGroup.findOneAndUpdate(
+                    { name: propName, type: 'property' },
+                    { surcharge: Number(sVal) || 0 }
+                );
+            }
+        }
+
         res.status(200).json({ message: 'Settings saved/updated successfully', settings: appSettings });
     } catch (error) {
         console.error('Error saving settings:', error);
@@ -121,13 +132,13 @@ router.post('/send-admin-test-email', async (req, res) => {
         });
 
         const mailOptions = {
-            from: `"Techbeeps CRM System" <${process.env.SMTP_USER}>`,
+            from: `"Universal Movers CRM" <${process.env.SMTP_USER}>`,
             to: targetEmail.trim(),
-            subject: '🔔 Techbeeps CRM - Admin Notification Email Verified',
+            subject: '🔔 Universal Movers CRM - Admin Notification Email Verified',
             html: `
                 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff;">
                     <div style="text-align: center; margin-bottom: 20px;">
-                        <h2 style="color: #3b82f6; margin: 0; font-size: 22px;">Techbeeps CRM</h2>
+                        <h2 style="color: #3b82f6; margin: 0; font-size: 22px;">Universal Movers CRM</h2>
                         <p style="color: #64748b; font-size: 13px; margin-top: 4px;">System Notification Service</p>
                     </div>
                     <div style="background: #f0fdf4; border-radius: 12px; padding: 18px; border: 1px solid #bbf7d0; margin-bottom: 20px;">
@@ -137,7 +148,7 @@ router.post('/send-admin-test-email', async (req, res) => {
                         </p>
                     </div>
                     <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
-                        Dispatched: ${new Date().toISOString()} • Techbeeps CRM
+                        Dispatched: ${new Date().toISOString()} • Universal Movers CRM
                     </p>
                 </div>
             `,

@@ -15,19 +15,51 @@ exports.createPackage = async (req, res) => {
 
 // Get all packages
 exports.getAllPackages = async (req, res) => {
-    const { type ,priceAgree} = req.query;
+    const { type, priceAgree, withJob } = req.query;
     const filter = {};
     if (type) {
-        filter.type_job = type;
+        if (type === 'Manual/No job') {
+            filter.type_job = { $in: ['Manual/No job', '', null] };
+        } else {
+            filter.type_job = type;
+        }
+    }
+    if (withJob === 'true' || withJob === true) {
+        filter.type_job = { $nin: ['Manual/No job', '', null] };
+    } else if (withJob === 'false' || withJob === false) {
+        filter.type_job = { $in: ['Manual/No job', '', null] };
     }
     if (priceAgree) {
-        filter.priceAgree = priceAgree;
+        const cleanAgree = String(priceAgree).toLowerCase();
+        if (cleanAgree.includes('hour')) {
+            filter.$or = [
+                { priceAgree: { $regex: /hour/i } },
+                { priceAgree: 'onhourly_basis' },
+            ];
+        } else if (cleanAgree.includes('fix')) {
+            if (withJob === 'true' || withJob === true) {
+                filter.$or = [
+                    { priceAgree: { $regex: /fix/i } },
+                    { priceAgree: 'fixed_price' },
+                ];
+            } else {
+                filter.$or = [
+                    { priceAgree: { $regex: /fix/i } },
+                    { priceAgree: 'fixed_price' },
+                    { priceAgree: { $exists: false } },
+                    { priceAgree: null },
+                    { priceAgree: '' },
+                ];
+            }
+        } else {
+            filter.priceAgree = priceAgree;
+        }
     }
     try {
         const packages = await Package.find(filter);
         return res.status(200).json(packages);
     } catch (error) {
-        return res.status(500).json({ message: 'Error fetching packages', error });
+        return res.status(500).json({ message: 'Error fetching packages', error: error.message });
     }
 };
 

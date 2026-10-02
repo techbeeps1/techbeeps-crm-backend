@@ -10,6 +10,10 @@ const salesGroupSchema = new mongoose.Schema({
     },
     code: {
         type: String,
+    },
+    surcharge: {
+        type: Number,
+        default: 0,
     }
 }, { timestamps: true });
 

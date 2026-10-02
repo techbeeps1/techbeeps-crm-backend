@@ -13,6 +13,9 @@ const ServiceType = require("../models/Valuation/serviceTypeModel");
 exports.jobSchedule = async (req, res) => {
   try {
     const { date, customer, package, load, unload, knownAddress, services, priceAgree, hasElevator, unloadElevator } = req.body;
+    if (!customer) {
+      return res.status(400).json({ message: 'Customer ID is required to schedule a job' });
+    }
     const customerExists = await Customer.findById(customer);
     if (!customerExists) {
       return res.status(404).json({ message: 'Customer not found' });
@@ -38,9 +41,37 @@ exports.updateJobSchedule = async (req, res) => {
     if (!jobSchedule) {
       return res.status(404).json({ message: 'Job schedule not found' });
     }
+    if (customer) {
+      const customerExists = await Customer.findById(customer);
+      if (!customerExists) {
+        return res.status(404).json({ message: 'Referenced customer does not exist' });
+      }
+      jobSchedule.customer = customer;
+    }
+
+    if (status) {
+      const CANONICAL_STATUSES = ['DRAFT', 'PROCESSING', 'EXECUTION', 'COMPLETED', 'CANCELLED'];
+      const STATUS_MAP = {
+        'first contact': 'PROCESSING',
+        'processing': 'PROCESSING',
+        'in progress': 'EXECUTION',
+        'execution': 'EXECUTION',
+        'completed': 'COMPLETED',
+        'cancelled': 'CANCELLED',
+        'draft': 'DRAFT',
+        'pending': 'PROCESSING',
+      };
+      const normalizedStatus = String(status).toLowerCase().trim();
+      const canonicalStatus = STATUS_MAP[normalizedStatus] || String(status).toUpperCase().trim();
+      if (!CANONICAL_STATUSES.includes(canonicalStatus)) {
+        return res.status(400).json({
+          message: `Invalid workflow status: '${status}'. Allowed canonical states: ${CANONICAL_STATUSES.join(', ')}`
+        });
+      }
+      jobSchedule.status = canonicalStatus;
+    }
+
     jobSchedule.date = date || jobSchedule.date;
-    jobSchedule.status = status || jobSchedule.status;
-    jobSchedule.customer = customer || jobSchedule.customer;
     jobSchedule.package = package || jobSchedule.package;
     jobSchedule.load = load || jobSchedule.load;
     jobSchedule.unload = unload || jobSchedule.unload;
@@ -81,6 +112,14 @@ exports.jobList = async (req, res) => {
     }
     if (invoice) {
       filter.invoice = invoice;
+    }
+    if (req.query.status) {
+      const st = req.query.status.toLowerCase().trim();
+      if (st === 'active') {
+        filter.status = { $nin: ['COMPLETED', 'CANCELLED', 'DRAFT', 'completed', 'cancelled', 'draft'] };
+      } else {
+        filter.status = new RegExp(`^${req.query.status}$`, 'i');
+      }
     }
     const jobList = await JobSchedule.find(filter)
       .select('customer date status load unload index') // Select only necessary fields

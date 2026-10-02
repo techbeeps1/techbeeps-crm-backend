@@ -28,7 +28,19 @@ const appointmentSchema = new mongoose.Schema(
         ref: "Employability",
       },
     ],
-  
+    vehicle: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Vehicle",
+    },
+    vehicleName: {
+      type: String,
+      default: "",
+    },
+    status: {
+      type: String,
+      enum: ["Draft", "Scheduled", "Completed", "Cancelled"],
+      default: "Scheduled",
+    },
     notes: {
       type: String,
     },

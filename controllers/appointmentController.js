@@ -6,24 +6,27 @@ exports.createAppointment = async (req, res) => {
     try {
         const { 
             jobId, date, startTime, endTime, appointmentType, 
-             workLocation, departureLocation,
-             assignedEmployees,
-
-            notes, id, ...extraFields // Capture dynamic fields here and the id for update
+            workLocation, departureLocation,
+            assignedEmployees,
+            vehicle, vehicleName, status,
+            notes, id, ...extraFields
         } = req.body;
 
+        const employeesList = Array.isArray(assignedEmployees) ? assignedEmployees : [];
+        let savedEmployabilityIds = [];
 
-
-        const employabilityRecords = assignedEmployees.map(emp => ({
-            employeeId: emp.employeeId,
-            employeeName: emp.employeeName,
-            workType: emp.workType,
-            startTime: emp.startTime,
-            endTime: emp.endTime,
-            vehicle: emp.vehicle || null, // Assign vehicle if provided, else null
-
-        }));
-        const savedEmployability = await Employability.insertMany(employabilityRecords);
+        if (employeesList.length > 0) {
+            const employabilityRecords = employeesList.map(emp => ({
+                employeeId: emp.employeeId,
+                employeeName: emp.employeeName,
+                workType: emp.workType,
+                startTime: emp.startTime,
+                endTime: emp.endTime,
+                vehicle: emp.vehicle || null,
+            }));
+            const savedEmployability = await Employability.insertMany(employabilityRecords);
+            savedEmployabilityIds = savedEmployability.map(emp => emp._id);
+        }
 
         const appointmentData = {
             jobId,
@@ -32,39 +35,30 @@ exports.createAppointment = async (req, res) => {
             endTime,
             appointmentType,
             workLocation,
-        
             departureLocation,
-            assignedEmployees: savedEmployability.map(emp => emp._id), // Store the IDs of the employability records
+            assignedEmployees: savedEmployabilityIds,
+            vehicle: vehicle || null,
+            vehicleName: vehicleName || '',
+            status: status || (savedEmployabilityIds.length > 0 ? 'Scheduled' : 'Draft'),
             notes,
-            
         };
+
         let newAppointment;
         if (id) {
             newAppointment = await Appointment.findByIdAndUpdate(id, appointmentData, { new: true });
             if (!newAppointment) {
                 return res.status(404).json({ message: 'Appointment not found' });
             }
-           
-            res.status(200).json(newAppointment);  // Return the updated appointment
+            res.status(200).json(newAppointment);
         } else {
             newAppointment = new Appointment(appointmentData);
             await newAppointment.save();
-           // Convert startTime to India time
-            res.status(201).json(newAppointment);  // Return the newly created appointment
+            res.status(201).json(newAppointment);
         }
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
-
-function toISTISOString(date) {
-  const d = new Date(date);
-
-  // IST = UTC +5:30
-  const ist = new Date(d.getTime() + (5.5 * 60 * 60 * 1000));
-
-  return ist.toISOString().replace("Z", "+05:30");
-}
 
 exports.getAppointments = async (req, res) => {
   try {
@@ -159,6 +153,9 @@ exports.updateAppointment = async (req, res) => {
       workLocation,
       departureLocation,
       assignedEmployees,
+      vehicle,
+      vehicleName,
+      status,
       notes,
     } = req.body;
 
@@ -181,19 +178,22 @@ exports.updateAppointment = async (req, res) => {
       });
     }
 
-    // Create new employability records
-    const employabilityRecords = assignedEmployees.map((emp) => ({
-      employeeId: emp.employeeId,
-      employeeName: emp.employeeName,
-      workType: emp.workType,
-      startTime: emp.startTime,
-      endTime: emp.endTime,
-      vehicle: emp.vehicle || null,
-    }));
+    const employeesList = Array.isArray(assignedEmployees) ? assignedEmployees : [];
+    let savedIds = [];
 
-    const savedEmployability = await Employability.insertMany(
-      employabilityRecords
-    );
+    if (employeesList.length > 0) {
+      const employabilityRecords = employeesList.map((emp) => ({
+        employeeId: emp.employeeId,
+        employeeName: emp.employeeName,
+        workType: emp.workType,
+        startTime: emp.startTime,
+        endTime: emp.endTime,
+        vehicle: emp.vehicle || null,
+      }));
+
+      const savedEmployability = await Employability.insertMany(employabilityRecords);
+      savedIds = savedEmployability.map((item) => item._id);
+    }
 
     // Update appointment
     appointment.jobId = jobId;
@@ -204,9 +204,10 @@ exports.updateAppointment = async (req, res) => {
     appointment.workLocation = workLocation;
     appointment.departureLocation = departureLocation;
     appointment.notes = notes;
-    appointment.assignedEmployees = savedEmployability.map(
-      (item) => item._id
-    );
+    appointment.assignedEmployees = savedIds;
+    if (status) appointment.status = status;
+    if (vehicle !== undefined) appointment.vehicle = vehicle || null;
+    if (vehicleName !== undefined) appointment.vehicleName = vehicleName || '';
 
     await appointment.save();
 

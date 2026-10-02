@@ -30,6 +30,14 @@ exports.sendOtp = async (req, res) => {
     if (!email) {
         return res.status(400).json({ message: 'Email is required' });
     }
+    const emailDomain = (email || '').split('@')[1]?.toLowerCase();
+    const DISPOSABLE_EMAIL_DOMAINS = ['mailinator.com', 'tempmail.com', 'guerrillamail.com', 'yopmail.com', 'trashmail.com'];
+    if (DISPOSABLE_EMAIL_DOMAINS.includes(emailDomain)) {
+        return res.status(403).json({ message: 'Password recovery is disabled for public disposable mailbox domains.' });
+    }
+    if (user && (user.isRestricted || user.isActive === false)) {
+        return res.status(403).json({ message: 'Password recovery is disabled for restricted accounts.' });
+    }
     try {
         await Otp.findOneAndUpdate({ email }, { otp }, { upsert: true });
         const mailOptions = {
@@ -111,7 +119,8 @@ exports.sendEmail = async (req, res) => {
             recipient: mailOptions.to,
             subject: mailOptions.subject,
             htmlContent: mailOptions.html,
-            customer: job ? jobDetail.customer?._id : null
+            customer: job ? (jobDetail?.customer?._id || jobDetail?.customer) : null,
+            job: job || null,
         });
         if (job) {
             await jobSchedule.findByIdAndUpdate(

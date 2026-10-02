@@ -63,7 +63,7 @@ const jodScheduleSchema = new mongoose.Schema({
   unload: { type: addressSchema },
   services: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ServiceType' }],
   knownAddress: { type: Boolean, default: false },
-  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: [true, 'Customer is required'] },
   package: { type: mongoose.Schema.Types.ObjectId, ref: 'package' },
   offer: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Finance' }],
   invoice: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' }],

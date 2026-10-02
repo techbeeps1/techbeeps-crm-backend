@@ -12,7 +12,7 @@ const weekDaysSchema = new mongoose.Schema({
   wednesday: { type: dayScheduleSchema, default: () => ({ enabled: true, startTime: '08:00', endTime: '17:00' }) },
   thursday: { type: dayScheduleSchema, default: () => ({ enabled: true, startTime: '08:00', endTime: '17:00' }) },
   friday: { type: dayScheduleSchema, default: () => ({ enabled: true, startTime: '08:00', endTime: '17:00' }) },
-  saturday: { type: dayScheduleSchema, default: () => ({ enabled: false, startTime: '08:00', endTime: '17:00' }) },
+  saturday: { type: dayScheduleSchema, default: () => ({ enabled: true, startTime: '08:00', endTime: '17:00' }) },
   sunday: { type: dayScheduleSchema, default: () => ({ enabled: false, startTime: '08:00', endTime: '17:00' }) },
 }, { _id: false });
 

@@ -1,8 +1,9 @@
 const express = require('express');
-const { sendEmail, getEmailById, updateEmail, deleteEmail } = require('../controllers/emailTemplateController');
+const { sendEmail, getEmailById, getEmails, updateEmail, deleteEmail } = require('../controllers/emailTemplateController');
 
 const router = express.Router();
 
+router.get('/emails', getEmails);
 router.post('/emails', sendEmail);
 
 router.get('/emails/:id', getEmailById);

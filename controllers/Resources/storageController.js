@@ -308,18 +308,30 @@ exports.DownloadInvoicePDF = async (req, res) => {
         }
 
         const company = await CompanyDetails.findOne();
+        const fallbackCompany = {
+            companyName: 'Universal Movers B.V.',
+            companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
+            companyState: 'Amsterdam',
+            companyCountry: 'Netherlands',
+            companyEmail: 'info@universalmovers.nl',
+            companyPhone: '+31 20 123 4567',
+            companyWebsite: 'https://universalmovers.nl',
+            companyTaxNumber: 'NL861234567B01',
+            companyVatNumber: 'NL861234567B01',
+            companyRegNumber: '81234567',
+        };
         const emailTemplate = await financial.findById(financialTemplate);
         const appSettings = await AppSettings.findOne();
 
         const data = {
-            company,
+            company: company || fallbackCompany,
             customer: storage.customer,
             storage,
             lastInvoiceDate,
             startDate: storage.invoicingStartDate?.toLocaleString(),
             endDate: new Date(lastInvoiceDate)?.toLocaleString(),
-            currency: appSettings?.currency || 'USD',
-            currencySymbol: appSettings?.currencySymbol || '$',
+            currency: appSettings?.currency || 'EUR',
+            currencySymbol: appSettings?.currencySymbol || '€',
             currencyPosition: appSettings?.currencyPosition || 'before',
             currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
         };
@@ -371,13 +383,25 @@ exports.sendInvoicePDF = async (req, res) => {
         let emailHtml = emailTemplate.htmlContent;
 
         const appSettings = await AppSettings.findOne();
+        const fallbackCompany = {
+            companyName: 'Universal Movers B.V.',
+            companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
+            companyState: 'Amsterdam',
+            companyCountry: 'Netherlands',
+            companyEmail: 'info@universalmovers.nl',
+            companyPhone: '+31 20 123 4567',
+            companyWebsite: 'https://universalmovers.nl',
+            companyTaxNumber: 'NL861234567B01',
+            companyVatNumber: 'NL861234567B01',
+            companyRegNumber: '81234567',
+        };
         const data = {
-            company: company,
+            company: company || fallbackCompany,
             customer: storage.customer,
             storage: storage,
             lastInvoiceDate: lastInvoiceDate,
-            currency: appSettings?.currency || 'USD',
-            currencySymbol: appSettings?.currencySymbol || '$',
+            currency: appSettings?.currency || 'EUR',
+            currencySymbol: appSettings?.currencySymbol || '€',
             currencyPosition: appSettings?.currencyPosition || 'before',
             currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
         };
@@ -485,9 +509,11 @@ async function generatePdf(htmlContent, data) {
     </table>
   `;
 
-  const populatedHtml = (htmlContent || "").replace(
-    /{{\s*(\w+(\.\w+)*)\s*}}/g,
-    (match, key) => {
+  const populatedHtml = (htmlContent || '')
+    .replace(/\$\{[^}]*\}/g, '')
+    .replace(
+      /{{\s*(\w+(\.\w+)*)\s*}}/g,
+      (match, key) => {
       if (key === "items") {
         return itemsHtml;
       }

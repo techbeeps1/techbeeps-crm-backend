@@ -33,6 +33,8 @@ const userSchema = new mongoose.Schema({
   default: ['Dashboard']
 },
   documentNumber: { type: String },
+  isActive: { type: Boolean, default: true },
+  isRestricted: { type: Boolean, default: false },
 
 }, { timestamps: true });
 

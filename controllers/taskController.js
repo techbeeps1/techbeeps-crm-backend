@@ -34,6 +34,16 @@ exports.createTask = async (req, res) => {
             taskData.directMembers = taskData.directMembers.filter(mid => mid && mid !== '');
         }
 
+        // Normalize scheduledFor to UTC midday of the target calendar date (UM-029)
+        if (taskData.scheduledFor) {
+            const dateStr = typeof taskData.scheduledFor === 'string'
+                ? taskData.scheduledFor.slice(0, 10)
+                : new Date(taskData.scheduledFor).toISOString().slice(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                taskData.scheduledFor = new Date(`${dateStr}T12:00:00.000Z`);
+            }
+        }
+
         const task = new Task(taskData);
         await task.save();
 
@@ -79,35 +89,47 @@ exports.createTask = async (req, res) => {
 // Get all tasks
 exports.getTasks = async (req, res) => {
     try {
-        const { scheduledFor,jobId } = req.query; // Get the scheduledFor parameter from query
+        const { scheduledFor, jobId } = req.query; // Get the scheduledFor parameter from query
         let filter = {}; // Default filter (no filter applied)
         if (jobId) {
             filter.job = jobId; // Filter for specific jobId
         }
         if (scheduledFor === 'today') {
-            const startOfDay = new Date();
-            startOfDay.setHours(0, 0, 0, 0);  // Set to midnight
-            const endOfDay = new Date(startOfDay);
-            endOfDay.setHours(23, 59, 59, 999); // Set to the last millisecond of the day
-            filter.scheduledFor = { $gte: startOfDay.toISOString(), $lt: endOfDay.toISOString() }; // Filter for today
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = now.getMonth();
+            const d = now.getDate();
+            const startOfDay = new Date(Date.UTC(y, m, d, 0, 0, 0));
+            const endOfDay = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
+            filter.scheduledFor = { $gte: startOfDay, $lte: endOfDay };
         }
         else if (scheduledFor === 'tomorrow') {
-            const startOfTomorrow = new Date();
-            startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);  // Move to tomorrow
-            startOfTomorrow.setHours(0, 0, 0, 0);  // Set to midnight
-            const endOfTomorrow = new Date(startOfTomorrow);
-            endOfTomorrow.setHours(23, 59, 59, 999); // Set to the last millisecond of the day
-            filter.scheduledFor = { $gte: startOfTomorrow.toISOString(), $lt: endOfTomorrow.toISOString() }; // Filter for tomorrow
+            const now = new Date();
+            now.setDate(now.getDate() + 1);
+            const y = now.getFullYear();
+            const m = now.getMonth();
+            const d = now.getDate();
+            const startOfTomorrow = new Date(Date.UTC(y, m, d, 0, 0, 0));
+            const endOfTomorrow = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
+            filter.scheduledFor = { $gte: startOfTomorrow, $lte: endOfTomorrow };
         }
-        else if (scheduledFor === 'ever') {
+        else if (scheduledFor === 'ever' || scheduledFor === 'all') {
             filter = {}; // No filter on scheduledFor, return all tasks
         }
         else if (scheduledFor) {
-            const specificDate = new Date(scheduledFor);
-            specificDate.setHours(0, 0, 0, 0);  // Set to midnight of the specific date
-            const endOfSpecificDate = new Date(specificDate);
-            endOfSpecificDate.setHours(23, 59, 59, 999); // Set to the last millisecond of the day
-            filter.scheduledFor = { $gte: specificDate.toISOString(), $lt: endOfSpecificDate.toISOString() }; // Filter by specific date
+            let y, m, d;
+            if (typeof scheduledFor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(scheduledFor)) {
+                [y, m, d] = scheduledFor.split('-').map(Number);
+                m = m - 1;
+            } else {
+                const parsed = new Date(scheduledFor);
+                y = parsed.getFullYear();
+                m = parsed.getMonth();
+                d = parsed.getDate();
+            }
+            const specificStart = new Date(Date.UTC(y, m, d, 0, 0, 0));
+            const specificEnd = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
+            filter.scheduledFor = { $gte: specificStart, $lte: specificEnd };
         }
 
         // Role-based filtering: Non-admins only see tasks assigned to them
@@ -176,6 +198,14 @@ exports.updateTask = async (req, res) => {
         }
         if (updateData.directMembers && Array.isArray(updateData.directMembers)) {
             updateData.directMembers = updateData.directMembers.filter(mid => mid && mid !== '');
+        }
+        if (updateData.scheduledFor) {
+            const dateStr = typeof updateData.scheduledFor === 'string'
+                ? updateData.scheduledFor.slice(0, 10)
+                : new Date(updateData.scheduledFor).toISOString().slice(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                updateData.scheduledFor = new Date(`${dateStr}T12:00:00.000Z`);
+            }
         }
         const updatedTask = await Task.findByIdAndUpdate(id, updateData, { new: true });
         if (!updatedTask) {

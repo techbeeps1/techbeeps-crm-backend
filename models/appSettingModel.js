@@ -16,25 +16,26 @@ const emailTemplateSchema = new Schema({
     storageInovice : { type: String ,default:""},
 });
 
-const standardPriceSchema={
-    pricePerMeterCubic :{type:Number,default:0},
-    pricePerHour :{type:Number,default:0},
-    pricePerKilometer :{type:Number,default:0},
-    cubicMeterPerHourPerEmployee:{type:Number,default:0},
-    packingBoxPerHour :{type:Number,default:0},
-    unPackagingBoxPerHour :{type:Number,default:0},
-    assemblingTimePerfurniture :{type:Number,default:0},
-    disassemblingTimePerfurniture :{type:Number,default:0},
-}
+const standardPriceSchema = {
+    pricePerMeterCubic: { type: Number, default: 0 },
+    pricePerHour: { type: Number, default: 0 },
+    pricePerKilometer: { type: Number, default: 0 },
+    cubicMeterPerHourPerEmployee: { type: Number, default: 0 },
+    packingBoxPerHour: { type: Number, default: 10 },
+    unPackagingBoxPerHour: { type: Number, default: 10 },
+    assemblingTimePerfurniture: { type: Number, default: 15 },
+    disassemblingTimePerfurniture: { type: Number, default: 15 },
+    propertySurcharges: { type: Schema.Types.Mixed, default: {} },
+};
 
 const appSettingsSchema = new Schema({
     language: { type: String, default: 'US English' },
-    country: { type: String, default: 'IN India' },
+    country: { type: String, default: 'NL Netherlands' },
     adminNotificationEmail: { type: String, default: '' },
-    timezone: { type: String, default: 'UTC +05:30 (Asia/Kolkata)' },
-    timezoneName: { type: String, default: 'Asia/Kolkata' },
-    currency: { type: String, default: 'USD' },
-    currencySymbol: { type: String, default: '$' },
+    timezone: { type: String, default: 'UTC +01:00 (Europe/Amsterdam)' },
+    timezoneName: { type: String, default: 'Europe/Amsterdam' },
+    currency: { type: String, default: 'EUR' },
+    currencySymbol: { type: String, default: '€' },
     currencyPosition: { type: String, default: 'before' },
     currencyDecimals: { type: Number, default: 2 },
     emailTemplates: emailTemplateSchema,

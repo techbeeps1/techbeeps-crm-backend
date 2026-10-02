@@ -24,6 +24,8 @@ router.delete('/requests/:id', leaveController.deleteLeaveRequest);
 // Leave Balances & Leave Cards
 router.get('/balances', leaveController.getLeaveBalances);
 router.put('/balances/:employeeId', leaveController.updateLeaveBalance);
+router.post('/balances/:employeeId/reconcile', leaveController.reconcileBalances);
+router.post('/reconcile', leaveController.reconcileBalances);
 
 // Summary KPI Metrics
 router.get('/summary', leaveController.getLeaveSummary);

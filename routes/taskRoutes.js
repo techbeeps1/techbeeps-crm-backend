@@ -7,7 +7,7 @@ router.post('/', roleMiddleware('Admin'), taskController.createTask);
 
 router.get('/', taskController.getTasks);
 
-router.put('/:id', roleMiddleware('Admin'), taskController.updateTask);
+router.put('/:id', taskController.updateTask);
 
 router.delete('/:id', roleMiddleware('Admin'), taskController.deleteTask);
 

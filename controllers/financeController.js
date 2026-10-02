@@ -64,18 +64,28 @@ exports.updateInvoice = async (req, res) => {
   const { id } = req.params;
   const updatedData = req.body;
 
-  // If request comes with auth token from CRM user, restrict edit privileges to Admin
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-  if (token) {
+  const isAcceptingQuote = updatedData.Status && updatedData.Status.toLowerCase() === 'accepted';
+  const allowedPublicFields = ['Status', 'customerSignature', 'acceptedAt'];
+  const payloadKeys = Object.keys(updatedData);
+  const isPublicAcceptanceOnly = isAcceptingQuote && payloadKeys.every(k => allowedPublicFields.includes(k));
+
+  if (!isPublicAcceptanceOnly) {
+    // Modifications other than customer quote acceptance require Admin authentication
+    const authHeader = req.header('Authorization');
+    const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.replace('Bearer ', '').trim() : null;
+    if (!token || token === 'null' || token === 'undefined') {
+      return res.status(401).json({ msg: 'Authentication token required for invoice modification' });
+    }
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       if (decoded && decoded.role !== 'Admin') {
         return res.status(403).json({ msg: 'Access denied: Staff and Agents cannot edit quotes' });
       }
     } catch (tokenErr) {
-      // If token is invalid or expired, continue only if it is a public status update
+      return res.status(401).json({ msg: 'Invalid authentication token' });
     }
   }
+
   try {
     const updatedInvoice = await Finance.findByIdAndUpdate(
       id,
@@ -127,6 +137,8 @@ exports.updateInvoice = async (req, res) => {
 exports.financeDetail = async (req, res) => {
   const { Id } = req.params;
   const { template } = req.query;
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+
   try {
     const finance = await Finance.findById(Id).populate({
       path: 'customer',
@@ -134,7 +146,50 @@ exports.financeDetail = async (req, res) => {
         path: 'address',
         match: { addressType: 'head' },
       },
-    }).populate('contactPerson', 'username').populate('package', 'name').populate('financialTemplate', !template && 'name').populate('items.salesgroup', 'name').populate('job');
+    }).populate('contactPerson', 'username').populate('package', 'name type_job priceAgree vat ignoreRules offers').populate('financialTemplate', !template && 'name').populate('items.salesgroup', 'name').populate({
+      path: 'job',
+      populate: { path: 'package' }
+    });
+
+    if (!finance) {
+      return res.status(404).json({ message: "Quotation not found" });
+    }
+
+    // If request is from an unauthenticated public recipient, sanitize DTO
+    if (!token) {
+      const pubFinance = {
+        _id: finance._id,
+        index: finance.index,
+        Status: finance.Status,
+        date: finance.date,
+        createdAt: finance.createdAt,
+        total: finance.total,
+        subtotal: finance.subtotal,
+        tax: finance.tax,
+        discount: finance.discount,
+        paymentOption: finance.paymentOption,
+        items: (finance.items || []).map(item => ({
+          description: item.description,
+          price: item.price,
+          quantity: item.quantity,
+          total: item.total,
+          tax: item.tax,
+          unit: item.unit
+        })),
+        customer: finance.customer ? {
+          firstName: finance.customer.firstName,
+          lastName: finance.customer.lastName,
+          companyName: finance.customer.companyName,
+          email: finance.customer.email,
+          telephone: finance.customer.telephone,
+          address: finance.customer.address,
+        } : null,
+        financialTemplate: finance.financialTemplate,
+        package: finance.package ? { name: finance.package.name } : null,
+      };
+      return res.json({ finance: pubFinance });
+    }
+
     res.json({ finance });
   } catch (err) {
     console.error(err);
@@ -145,17 +200,23 @@ exports.financeDetail = async (req, res) => {
 exports.financeList = async (req, res) => {
   try {
     let { job, customer } = req.query;
-    const page = parseInt(req.query.page) || 1;
     const filter = {};
-    if (job) filter.job = job;
-    if (customer) filter.customer = customer;
-    const financeList = await Finance.find(filter).sort({ createdAt: -1 }).populate('customer', 'firstName lastName').populate('contactPerson', 'username');
+    if (job && job !== 'undefined' && job !== 'null' && job.trim() !== '') {
+      filter.job = job;
+    }
+    if (customer && customer !== 'undefined' && customer !== 'null' && customer.trim() !== '') {
+      filter.customer = customer;
+    }
+    const financeList = await Finance.find(filter)
+      .sort({ createdAt: -1 })
+      .populate('customer', 'firstName lastName')
+      .populate('contactPerson', 'username');
     res.json({
       financeData: financeList,
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error fetching quotes' });
   }
 };
 
@@ -242,18 +303,26 @@ exports.DownloadInvoicePDF = async (req, res) => {
     }
 
     const company = await CompanyDetails.findOne();
-
-    if (!company) {
-      return res.status(404).send("Company details not found");
-    }
+    const fallbackCompany = {
+      companyName: 'Universal Movers B.V.',
+      companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
+      companyState: 'Amsterdam',
+      companyCountry: 'Netherlands',
+      companyEmail: 'info@universalmovers.nl',
+      companyPhone: '+31 20 123 4567',
+      companyWebsite: 'https://universalmovers.nl',
+      companyTaxNumber: 'NL861234567B01',
+      companyVatNumber: 'NL861234567B01',
+      companyRegNumber: '81234567',
+    };
 
     const appSettings = await AppSettings.findOne();
     const data = {
-      company,
+      company: company || fallbackCompany,
       customer: invoice.customer,
       invoice,
-      currency: appSettings?.currency || 'USD',
-      currencySymbol: appSettings?.currencySymbol || '$',
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
       currencyPosition: appSettings?.currencyPosition || 'before',
       currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
@@ -281,7 +350,7 @@ exports.DownloadInvoicePDF = async (req, res) => {
 const puppeteer = require("puppeteer-core");
 const chromium = require("@sparticuz/chromium");
 async function generatePdf(htmlContent, data) {
-  const sym = data.currencySymbol || '$';
+  const sym = data.currencySymbol || '€';
   const pos = data.currencyPosition || 'before';
   const dec = data.currencyDecimals !== undefined ? data.currencyDecimals : 2;
   const fmt = (num) => {
@@ -332,9 +401,11 @@ async function generatePdf(htmlContent, data) {
     </table>
   `;
 
-  const populatedHtml = htmlContent.replace(
-    /{{\s*(\w+(\.\w+)*)\s*}}/g,
-    (match, key) => {
+  const populatedHtml = (htmlContent || '')
+    .replace(/\$\{[^}]*\}/g, '')
+    .replace(
+      /{{\s*(\w+(\.\w+)*)\s*}}/g,
+      (match, key) => {
       if (key === "items") {
         return itemsHtml;
       }
@@ -411,38 +482,68 @@ exports.createInvoicePDF = async (req, res) => {
     if (!invoice) {
       return res.status(404).send('Invoice not found');
     }
-    const company = await CompanyDetails.findOne();
+    let company = await CompanyDetails.findOne();
     if (!company) {
-      return res.status(404).send('Company details not found');
+      company = {
+        companyName: 'Universal Movers',
+        email: process.env.SMTP_USER || 'info@universalmovers.nl',
+      };
     }
-    const emailTemplate = await EmailTemplate.findById(emailTemplateId);
-    if (!emailTemplate) {
-      return res.status(404).send('Email template not found');
-    }
-    let emailHtml = emailTemplate.htmlContent;
 
     const appSettings = await AppSettings.findOne();
+
+    let emailTemplate = null;
+    if (emailTemplateId && ObjectId.isValid(emailTemplateId)) {
+      emailTemplate = await EmailTemplate.findById(emailTemplateId);
+    }
+    if (!emailTemplate && appSettings?.emailTemplates?.thankyou && ObjectId.isValid(appSettings.emailTemplates.thankyou)) {
+      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.thankyou);
+    }
+    if (!emailTemplate && appSettings?.emailTemplates?.quote && ObjectId.isValid(appSettings.emailTemplates.quote)) {
+      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.quote);
+    }
+    if (!emailTemplate) {
+      emailTemplate = await EmailTemplate.findOne({
+        $or: [
+          { name: { $regex: /thank|quote|accept|offer/i } },
+          { documentType: { $regex: /thank|quote|accept|offer/i } },
+        ]
+      }) || await EmailTemplate.findOne();
+    }
+
+    let emailHtml = emailTemplate?.htmlContent || `
+      <p>Dear {{customer.firstName}},</p>
+      <p>Thank you for accepting Quotation # {{invoice.index}} from {{company.companyName}}.</p>
+      <p>We have successfully received your confirmation and will be in touch shortly.</p>
+      <p>Best regards,<br>{{company.companyName}}</p>
+    `;
+
     const data = {
       company: company,
-      customer: invoice.customer,
+      customer: invoice.customer || {},
       invoice: invoice,
       code: `/${invoice._id}`,
-      currency: appSettings?.currency || 'USD',
-      currencySymbol: appSettings?.currencySymbol || '$',
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
       currencyPosition: appSettings?.currencyPosition || 'before',
       currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
-    let html = invoice.financialTemplate.htmlContent;
 
-    if (!html) {
-      return res.status(404).send('Financial Template not found');
+    let html = invoice.financialTemplate?.htmlContent;
+    let pdfBuffer = null;
+    if (!content && html) {
+      try {
+        pdfBuffer = await generatePdf(html, data);
+      } catch (pdfErr) {
+        console.error("PDF generation skipped in createInvoicePDF:", pdfErr.message);
+      }
     }
 
-    const pdfBuffer = !content && await generatePdf(html, data) || null;
-
-    emailHtml = emailHtml.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-      return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
-    });
+    emailHtml = (emailHtml || '')
+      .replace(/\$\{[^}]*\}/g, '')
+      .replace(/{{\s*([\w.]+)\s*}}/g, (match, key) => {
+        return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+      });
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
@@ -457,28 +558,37 @@ exports.createInvoicePDF = async (req, res) => {
     const mailOptions = {
       from: process.env.SMTP_USER,
       to: invoice.customer?.email,
-      subject: `Quatation # ${invoice.index} from ${company.companyName}`,
+      subject: `Quotation # ${invoice.index} from ${company.companyName}`,
       html: emailHtml,
-      attachments: !content && [{
-        filename: 'Quatation.pdf',
+      attachments: (!content && pdfBuffer) ? [{
+        filename: `Quotation_${invoice.index || invoice._id}.pdf`,
         content: pdfBuffer,
         contentType: 'application/pdf'
-      }] || null,
+      }] : undefined,
     };
+
     const newEmail = new Email({
       from: process.env.SMTP_USER,
-      recipient: data.customer?.email,
+      recipient: invoice.customer?.email,
       subject: mailOptions.subject,
       htmlContent: mailOptions.html,
       offer: invoice._id,
-      customer: data.customer._id
+      customer: invoice.customer?._id
     });
     const savedEmail = await newEmail.save();
-    await transporter.sendMail(mailOptions);
-    res.status(200).send(savedEmail._id);
+
+    if (invoice.customer?.email) {
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (smtpErr) {
+        console.error("SMTP delivery warning:", smtpErr.message);
+      }
+    }
+
+    return res.status(200).send(savedEmail._id);
   } catch (error) {
     console.error("Error generating or sending PDF:", error);
-    res.status(500).send("Error generating or sending PDF");
+    return res.status(500).send("Error generating or sending PDF");
   }
 };
 

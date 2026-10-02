@@ -207,13 +207,25 @@ exports.DownloadInvoicePDF = async (req, res) => {
       return res.status(404).send('Invoice not found');
     }
     const company = await CompanyDetails.findOne();
+    const fallbackCompany = {
+      companyName: 'Universal Movers B.V.',
+      companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
+      companyState: 'Amsterdam',
+      companyCountry: 'Netherlands',
+      companyEmail: 'info@universalmovers.nl',
+      companyPhone: '+31 20 123 4567',
+      companyWebsite: 'https://universalmovers.nl',
+      companyTaxNumber: 'NL861234567B01',
+      companyVatNumber: 'NL861234567B01',
+      companyRegNumber: '81234567',
+    };
     const appSettings = await AppSettings.findOne();
     const data = {
-      company: company,
+      company: company || fallbackCompany,
       customer: invoice.customer,
       invoice: invoice,
-      currency: appSettings?.currency || 'USD',
-      currencySymbol: appSettings?.currencySymbol || '$',
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
       currencyPosition: appSettings?.currencyPosition || 'before',
       currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
     };
@@ -232,7 +244,7 @@ exports.DownloadInvoicePDF = async (req, res) => {
 };
 
 async function generatePdf(htmlContent, data) {
-  const sym = data.currencySymbol || '$';
+  const sym = data.currencySymbol || '€';
   const pos = data.currencyPosition || 'before';
   const dec = data.currencyDecimals !== undefined ? data.currencyDecimals : 2;
   const fmt = (num) => {
@@ -251,12 +263,14 @@ async function generatePdf(htmlContent, data) {
     
   `).join('');
 
-  const populatedHtml = htmlContent.replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
-    if (key === 'items') {
-      return itemsHtml;
-    }
-    return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
-  });
+  const populatedHtml = (htmlContent || '')
+    .replace(/\$\{[^}]*\}/g, '')
+    .replace(/{{\s*(\w+(\.\w+)*)\s*}}/g, (match, key) => {
+      if (key === 'items') {
+        return itemsHtml;
+      }
+      return key.split('.').reduce((obj, prop) => obj && obj[prop], data) || '';
+    });
 
     const isLocal = process.env.NODE_ENV === "development";
   
@@ -310,17 +324,37 @@ exports.createInvoicePDF = async (req, res) => {
     if (!invoice) {
       return res.status(404).send('Invoice not found');
     }
-    const company = await CompanyDetails.findOne();
+    let company = await CompanyDetails.findOne();
     if (!company) {
-      return res.status(404).send('Company details not found');
+      company = {
+        companyName: 'Universal Movers',
+        email: process.env.SMTP_USER || 'info@universalmovers.nl',
+      };
     }
-    const emailTemplate = await EmailTemplate.findById(emailTemplateId);
-    if (!emailTemplate) {
-      return res.status(404).send('Email template not found');
-    }
-    let emailHtml = emailTemplate.htmlContent;
 
     const appSettings = await AppSettings.findOne();
+
+    let emailTemplate = null;
+    if (emailTemplateId && ObjectId.isValid(emailTemplateId)) {
+      emailTemplate = await EmailTemplate.findById(emailTemplateId);
+    }
+    if (!emailTemplate && appSettings?.emailTemplates?.invoice && ObjectId.isValid(appSettings.emailTemplates.invoice)) {
+      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.invoice);
+    }
+    if (!emailTemplate) {
+      emailTemplate = await EmailTemplate.findOne({
+        $or: [
+          { name: { $regex: /invoice|thank|quote/i } },
+          { documentType: { $regex: /invoice|thank|quote/i } },
+        ]
+      }) || await EmailTemplate.findOne();
+    }
+
+    let emailHtml = emailTemplate?.htmlContent || `
+      <p>Dear {{customer.firstName}},</p>
+      <p>Here is your Invoice # {{invoice.index}} from {{company.companyName}}.</p>
+      <p>Best regards,<br>{{company.companyName}}</p>
+    `;
     const data = {
       company: company,
       customer: invoice.customer,

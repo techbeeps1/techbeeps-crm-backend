@@ -7,6 +7,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const Otp = require("../models/otpModel");
 const Vehicle = require('../models/Resources/vehicle');
+const Appointment = require('../models/appointmentModel');
 
 const ALL_CRM_MODULES = [
   'Dashboard',
@@ -62,6 +63,9 @@ const loginUser = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: "Invalid Credentials" });
+    }
+    if (user.isActive === false || user.isRestricted === true) {
+      return res.status(403).json({ msg: "This account has been deactivated or restricted by administrator." });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
@@ -146,6 +150,8 @@ const Allusers = async (req, res) => {
         access: 1,
         drivingLicense: 1,
         skills: 1,
+        isActive: 1,
+        isRestricted: 1,
         telephone: 1,
         country: 1,
         gender: 1,
@@ -178,12 +184,12 @@ const DEFAULT_WEEKLY_SCHEDULE = {
   wednesday: { enabled: true, startTime: '08:00', endTime: '17:00' },
   thursday: { enabled: true, startTime: '08:00', endTime: '17:00' },
   friday: { enabled: true, startTime: '08:00', endTime: '17:00' },
-  saturday: { enabled: false, startTime: '08:00', endTime: '17:00' },
+  saturday: { enabled: true, startTime: '08:00', endTime: '17:00' },
   sunday: { enabled: false, startTime: '08:00', endTime: '17:00' },
 };
 
 function getISOWeekNumber(d) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const dayNum = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
@@ -192,7 +198,7 @@ function getISOWeekNumber(d) {
 
 function getDayKey(dateObj) {
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  return days[dateObj.getDay()];
+  return days[dateObj.getUTCDay()];
 }
 
 function getFreeSlots(jobStart, jobEnd, bookings) {
@@ -238,19 +244,34 @@ function getFreeSlots(jobStart, jobEnd, bookings) {
 }
 
 function formatTime(date) {
-  return date.toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }
+
 const Allemployees = async (req, res) => {
   try {
     const { date } = req.params;
+    const { excludeAppointmentId } = req.query;
+
+    let excludedEmployabilityIds = [];
+    if (excludeAppointmentId && excludeAppointmentId !== 'undefined' && excludeAppointmentId !== 'null') {
+      try {
+        const existingAppt = await Appointment.findById(excludeAppointmentId);
+        if (existingAppt && Array.isArray(existingAppt.assignedEmployees)) {
+          excludedEmployabilityIds = existingAppt.assignedEmployees.map((id) => String(id));
+        }
+      } catch (err) {
+        console.error('Error fetching excluded appointment:', err);
+      }
+    }
 
     // Parse date parts to avoid timezone shifting
     const [yearStr, monthStr, dayStr] = date.split('-');
-    const targetDate = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, parseInt(dayStr, 10));
+    const targetDate = new Date(Date.UTC(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, parseInt(dayStr, 10)));
     const dayKey = getDayKey(targetDate);
     const isoWeek = getISOWeekNumber(targetDate);
     const isEvenWeek = isoWeek % 2 === 0;
@@ -271,7 +292,7 @@ const Allemployees = async (req, res) => {
 
         let isDayActive = true;
         let workingStartTime = '08:00';
-        let workingEndTime = '19:00';
+        let workingEndTime = '17:00';
 
         // 2. Check for Sporadic Exception on this specific date
         const sporadic = (avail?.sporadicExceptions || []).find((e) => e.date === date);
@@ -321,8 +342,8 @@ const Allemployees = async (req, res) => {
         }
 
         // 4. Check Approved Leave Requests
-        const dayStartObj = new Date(`${date}T00:00:00`);
-        const dayEndObj = new Date(`${date}T23:59:59`);
+        const dayStartObj = new Date(`${date}T00:00:00.000Z`);
+        const dayEndObj = new Date(`${date}T23:59:59.999Z`);
         const approvedLeaves = await LeaveRequest.find({
           employeeId: user._id,
           status: 'Approved',
@@ -356,8 +377,8 @@ const Allemployees = async (req, res) => {
           }
         }
 
-        const jobStart = new Date(`${date}T${workingStartTime}:00`);
-        const jobEnd = new Date(`${date}T${workingEndTime}:00`);
+        const jobStart = new Date(`${date}T${workingStartTime}:00.000Z`);
+        const jobEnd = new Date(`${date}T${workingEndTime}:00.000Z`);
 
         if (jobEnd <= jobStart) {
           return {
@@ -371,11 +392,16 @@ const Allemployees = async (req, res) => {
         }
 
         // 5. Check overlapping appointments / Employability bookings
-        const bookings = await Employability.find({
+        const bookingQuery = {
           employeeId: user._id,
           startTime: { $lt: jobEnd },
           endTime: { $gt: jobStart },
-        }).sort({ startTime: 1 });
+        };
+        if (excludedEmployabilityIds.length > 0) {
+          bookingQuery._id = { $nin: excludedEmployabilityIds };
+        }
+
+        const bookings = await Employability.find(bookingQuery).sort({ startTime: 1 });
 
         const freeSlots = getFreeSlots(jobStart, jobEnd, bookings);
 
@@ -393,37 +419,88 @@ const Allemployees = async (req, res) => {
       })
     );
 
-    // Calculate assigned vehicles for that date
-    const dayStartCheck = new Date(`${date}T00:00:00`);
-    const dayEndCheck = new Date(`${date}T23:59:59`);
-
-    const assignedVehicles = await Employability.find(
-      {
-        startTime: { $lt: dayEndCheck },
-        endTime: { $gt: dayStartCheck },
-        vehicle: { $ne: null },
-      },
-      { vehicle: 1 }
-    );
-
-    const assignedVehicleIds = assignedVehicles
-      .map((item) => item.vehicle)
-      .filter(Boolean);
-
-    // Only available vehicles
-    const vehicles = await Vehicle.find(
-      {
-        _id: { $nin: assignedVehicleIds },
-      },
+    // Fetch all vehicles
+    const allVehicles = await Vehicle.find(
+      {},
       {
         name: 1,
         licensePlate: 1,
         vehicleType: 1,
         model: 1,
       }
+    ).sort({ name: 1 });
+
+    // Calculate assigned vehicles and bookings for that date
+    const dayStartCheck = new Date(`${date}T00:00:00.000Z`);
+    const dayEndCheck = new Date(`${date}T23:59:59.999Z`);
+
+    const assignedVehiclesQuery = {
+      startTime: { $lt: dayEndCheck },
+      endTime: { $gt: dayStartCheck },
+      vehicle: { $ne: null },
+    };
+    if (excludedEmployabilityIds.length > 0) {
+      assignedVehiclesQuery._id = { $nin: excludedEmployabilityIds };
+    }
+
+    const assignedVehicles = await Employability.find(
+      assignedVehiclesQuery,
+      { vehicle: 1, startTime: 1, endTime: 1, employeeName: 1 }
     );
 
-    res.json({ employees: result, vehicles });
+    const assignedAppointmentsQuery = {
+      $or: [
+        { startTime: { $lt: dayEndCheck }, endTime: { $gt: dayStartCheck } },
+        { date: { $gte: dayStartCheck, $lte: dayEndCheck } },
+      ],
+      vehicle: { $ne: null },
+    };
+    if (excludeAppointmentId && excludeAppointmentId !== 'undefined' && excludeAppointmentId !== 'null') {
+      try {
+        assignedAppointmentsQuery._id = { $ne: excludeAppointmentId };
+      } catch (e) {}
+    }
+
+    const assignedAppointments = await Appointment.find(
+      assignedAppointmentsQuery,
+      { _id: 1, vehicle: 1, startTime: 1, endTime: 1 }
+    );
+
+    const vehicleBookings = [];
+    assignedVehicles.forEach((b) => {
+      const vId = b.vehicle?._id || b.vehicle;
+      if (vId) {
+        vehicleBookings.push({
+          vehicleId: String(vId),
+          rawStartTime: b.startTime,
+          rawEndTime: b.endTime,
+          startTime: formatTime(b.startTime),
+          endTime: formatTime(b.endTime),
+          employeeName: b.employeeName || '',
+        });
+      }
+    });
+
+    assignedAppointments.forEach((b) => {
+      const vId = b.vehicle?._id || b.vehicle;
+      if (vId) {
+        vehicleBookings.push({
+          appointmentId: String(b._id),
+          vehicleId: String(vId),
+          rawStartTime: b.startTime,
+          rawEndTime: b.endTime,
+          startTime: formatTime(b.startTime),
+          endTime: formatTime(b.endTime),
+        });
+      }
+    });
+
+    res.json({
+      employees: result,
+      vehicles: allVehicles,
+      allVehicles,
+      vehicleBookings,
+    });
   } catch (err) {
     console.error('Error in Allemployees:', err);
     res.status(500).json({ msg: "Server Error" });
@@ -460,6 +537,14 @@ const ResetPassword = async (req, res) => {
     if (!user) {
       return res.status(404).json({ msg: "User not found" });
     }
+    const emailDomain = (email || '').split('@')[1]?.toLowerCase();
+    const DISPOSABLE_EMAIL_DOMAINS = ['mailinator.com', 'tempmail.com', 'guerrillamail.com', 'yopmail.com', 'trashmail.com'];
+    if (DISPOSABLE_EMAIL_DOMAINS.includes(emailDomain)) {
+      return res.status(403).json({ msg: "Password recovery is disabled for public disposable mailbox domains." });
+    }
+    if (user.isRestricted || user.isActive === false) {
+      return res.status(403).json({ msg: "Password recovery is disabled for restricted accounts." });
+    }
     const record = await Otp.findOne({ email, otp });
     if (record) {
       await Otp.deleteOne({ email }); // OTP can only be used once
@@ -478,7 +563,7 @@ const ResetPassword = async (req, res) => {
   }
 };
 const UpdateDetails = async (req, res) => {
-  const { id, access, role } = req.body;
+  const { id, access, role, status, isActive, isRestricted } = req.body;
   try {
     const targetId = id || req.body._id || req.body.userId || req.user?.id || req.user?.userId || req.user?.user?.id || req.user?.user?.userId;
     if (!targetId) {
@@ -489,6 +574,29 @@ const UpdateDetails = async (req, res) => {
     delete updatePayload.id;
     delete updatePayload._id;
     delete updatePayload.userId;
+
+    // Handle status shorthand if provided ('active', 'deactive', 'inactive', 'restricted')
+    if (status !== undefined) {
+      const s = String(status).toLowerCase();
+      if (s === 'active') {
+        updatePayload.isActive = true;
+        updatePayload.isRestricted = false;
+      } else if (s === 'deactive' || s === 'inactive') {
+        updatePayload.isActive = false;
+        updatePayload.isRestricted = false;
+      } else if (s === 'restricted') {
+        updatePayload.isActive = false;
+        updatePayload.isRestricted = true;
+      }
+      delete updatePayload.status;
+    }
+
+    if (isActive !== undefined) {
+      updatePayload.isActive = Boolean(isActive);
+    }
+    if (isRestricted !== undefined) {
+      updatePayload.isRestricted = Boolean(isRestricted);
+    }
 
     if (role === 'Admin' && (!access || !Array.isArray(access) || access.length === 0)) {
       updatePayload.access = ALL_CRM_MODULES;

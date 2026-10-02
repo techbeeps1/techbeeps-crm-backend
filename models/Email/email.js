@@ -11,8 +11,12 @@ const emailSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Finance'
   },
+  job: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'jobSchedule'
+  },
   customer: {
-    type:String,
+    type: String,
   },
   attachment: {
     type: String,

@@ -64,9 +64,54 @@ const deleteEmail = async (req, res) => {
   }
 };
 
+// LIST: Get paginated emails with filters for customer/job/offer
+const getEmails = async (req, res) => {
+  try {
+    const { page = 1, rowsPerPage = 10, search = '', customerId, offerId, jobId } = req.query;
+    const filter = {};
+
+    if (customerId) {
+      filter.$or = [
+        { customer: String(customerId) },
+        { customer: customerId },
+      ];
+    } else if (jobId) {
+      filter.job = jobId;
+    } else if (offerId) {
+      filter.offer = offerId;
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [
+          { subject: searchRegex },
+          { recipient: searchRegex },
+          { from: searchRegex },
+        ],
+      });
+    }
+
+    const skip = (Math.max(1, parseInt(page)) - 1) * parseInt(rowsPerPage);
+    const limit = parseInt(rowsPerPage);
+
+    const [emails, totalEmails] = await Promise.all([
+      Email.find(filter).sort({ sentAt: -1, createdAt: -1 }).skip(skip).limit(limit),
+      Email.countDocuments(filter),
+    ]);
+
+    res.status(200).json({ emails, totalEmails });
+  } catch (error) {
+    console.error('Error fetching emails:', error);
+    res.status(500).json({ message: 'Error fetching emails', error: error.message });
+  }
+};
+
 module.exports = {
   sendEmail,
   getEmailById,
+  getEmails,
   updateEmail,
   deleteEmail,
 };

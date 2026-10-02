@@ -1,10 +1,27 @@
 const Customer = require("../models/customer");
-const Address = require('../models/addressModel')
+const Address = require('../models/addressModel');
+const { validatePhoneNumber } = require('../utils/phoneValidator');
 
 exports.customer = async (req, res) => {
   try {
-    // check customer exist or not
+    // Validate required name fields are not whitespace-only
+    const firstName = typeof req.body.firstName === 'string' ? req.body.firstName.trim() : '';
+    const lastName = typeof req.body.lastName === 'string' ? req.body.lastName.trim() : '';
+    if (!firstName) {
+      return res.status(400).json({ error: 'First name cannot be blank or spaces only.' });
+    }
+    if (!lastName) {
+      return res.status(400).json({ error: 'Last name cannot be blank or spaces only.' });
+    }
 
+    if (req.body.mobile && !validatePhoneNumber(req.body.mobile)) {
+      return res.status(400).json({ error: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).' });
+    }
+    if (req.body.contact && !validatePhoneNumber(req.body.contact)) {
+      return res.status(400).json({ error: 'Please enter a valid telephone number (e.g. 010 1234567 or +31 10 1234567).' });
+    }
+
+    // check customer exist or not
     const existingCustomer = await Customer.findOne({ email: req.body.email });
     if (existingCustomer) {
       return res.status(400).json({ error: 'Customer with this email already exists' });
@@ -160,6 +177,27 @@ exports.deleteCustomer = async (req, res) => {
     const customerId = req.params.customerId;
     const dataCheck = await Customer.findById(customerId);
     if (dataCheck) {
+      const JobSchedule = require('../models/jobSchedule');
+      const Invoice = require('../models/invoice');
+
+      const linkedJobsCount = await JobSchedule.countDocuments({ customer: customerId });
+      const linkedInvoicesCount = await Invoice.countDocuments({ customer: customerId });
+
+      if (linkedJobsCount > 0 || linkedInvoicesCount > 0) {
+        // Dependency-aware customer archival: Preserve document history and relational integrity
+        dataCheck.status = 'Inactive';
+        await dataCheck.save();
+        return res.status(200).send({
+          status: true,
+          msg: `Customer has active dependencies (${linkedJobsCount} linked jobs, ${linkedInvoicesCount} invoices). Customer has been archived as Inactive to preserve relational integrity.`,
+          archived: true,
+          dependencies: {
+            jobs: linkedJobsCount,
+            invoices: linkedInvoicesCount
+          }
+        });
+      }
+
       await Address.findByIdAndDelete(dataCheck.address);
       const DeleteData = await Customer.findOneAndDelete({ _id: dataCheck._id });
       res.status(200).send({
@@ -181,22 +219,65 @@ exports.deleteCustomer = async (req, res) => {
 
 exports.editCustomer = async (req, res) => {
   try {
-    const checkId = await Customer.findById({ _id: req.body._id });
-    if (checkId) {
-      const editdata = await Customer.findByIdAndUpdate(
-        req.body._id,
-        req.body,
-        { new: true }
-      );
-      if (editdata) {
-        res.status(200).send({
-          msg: "edit data is Successfully",
-          data: editdata,
-        });
-      }
+    const customerId = req.params.customerId || req.body._id;
+    if (!customerId) {
+      return res.status(400).json({ error: 'Customer ID is required for update.' });
     }
+
+    const existingCustomer = await Customer.findById(customerId);
+    if (!existingCustomer) {
+      return res.status(404).json({ error: 'Customer not found with the provided ID.' });
+    }
+
+    // Sanitize payload: never overwrite immutable identifiers or internal metadata
+    const updatePayload = { ...req.body };
+    delete updatePayload._id;
+    delete updatePayload.__v;
+    delete updatePayload.createdAt;
+    delete updatePayload.updatedAt;
+    delete updatePayload.customerIndex;
+
+    // Preserve existing address reference unless an explicit valid address ID is provided
+    if (!updatePayload.address || typeof updatePayload.address === 'object') {
+      delete updatePayload.address;
+    }
+
+    if (updatePayload.mobile && !validatePhoneNumber(updatePayload.mobile)) {
+      return res.status(400).json({ error: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).' });
+    }
+    if (updatePayload.contact && !validatePhoneNumber(updatePayload.contact)) {
+      return res.status(400).json({ error: 'Please enter a valid telephone number (e.g. 010 1234567 or +31 10 1234567).' });
+    }
+
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      customerId,
+      { $set: updatePayload },
+      { new: true, runValidators: true }
+    ).populate('address');
+
+    if (!updatedCustomer) {
+      return res.status(500).json({ error: 'Customer update failed unexpectedly.' });
+    }
+
+    res.status(200).json({
+      status: true,
+      msg: 'Customer updated successfully',
+      data: updatedCustomer,
+    });
   } catch (err) {
-    console.log(err);
+    console.error('Error updating customer:', err);
+    if (err.code === 11000) {
+      return res.status(400).json({
+        error: 'Duplicate entry: A customer with this email or identity already exists.',
+      });
+    }
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({
+        error: messages.join(', ') || 'Validation failed for customer data.',
+      });
+    }
+    res.status(500).json({ error: err.message || 'Internal server error during customer update.' });
   }
 };
 

@@ -1,11 +1,29 @@
 const RoomType = require('../../models/Valuation/roomTypeModel');
 const mongoose = require('mongoose');
 
-// Get all room types
+// Get all room types (optimized with lean and optional lightweight mode)
 exports.getAllRoomTypes = async (req, res) => {
     try {
-       // const roomTypes = await RoomType.find().populate('furnitureType').sort({ roomTypeName: 1 });
-        const roomTypes = await RoomType.find().populate({path: 'furnitureType',options: {sort: { furnitureTypeName: 1 } }}).sort({ roomTypeName: 1 }); // sort room types// Populate furnitureType and sort by roomTypeName
+        const { lightweight } = req.query;
+        let query = RoomType.find();
+
+        if (lightweight === 'true') {
+            query = query.select('-icon').populate({
+                path: 'furnitureType',
+                select: '-icon',
+                options: { sort: { furnitureTypeName: 1 } },
+            });
+        } else {
+            query = query.populate({
+                path: 'furnitureType',
+                options: { sort: { furnitureTypeName: 1 } },
+            });
+        }
+
+        const roomTypes = await query.sort({ roomTypeName: 1 }).lean();
+
+        // Catalog data changes infrequently; allow client caching with revalidation
+        res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
         res.status(200).json(roomTypes);
     } catch (error) {
         res.status(500).json({ error: error.message });

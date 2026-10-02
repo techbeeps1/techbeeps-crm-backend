@@ -5,6 +5,7 @@ const Package = require("../../models/PackageModel");
 const Notes = require("../../models/job/notes");
 const Finance = require("../../models/finance");
 const ValuationRooms = require("../../models/Valuation/valuationRoomDetail");
+const { validatePhoneNumber } = require("../../utils/phoneValidator");
 
 exports.valuationMaster = async (req, res) => {
   try {
@@ -26,7 +27,33 @@ exports.valuationMaster = async (req, res) => {
     } = req.body;
     let job;
 
+    if (customer) {
+      if (customer.mobile && !validatePhoneNumber(customer.mobile)) {
+        return res.status(400).json({ error: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).' });
+      }
+      if (customer.contact && !validatePhoneNumber(customer.contact)) {
+        return res.status(400).json({ error: 'Please enter a valid telephone number (e.g. 010 1234567 or +31 10 1234567).' });
+      }
+    }
+
     // 1️⃣ **Check if Job Exists or Create New**
+
+    const sanitizeCustomerPayload = (cust) => {
+      if (!cust || typeof cust !== 'object') return {};
+      const payload = { ...cust };
+      delete payload._id;
+      delete payload.__v;
+      delete payload.createdAt;
+      delete payload.updatedAt;
+      delete payload.customerIndex;
+      delete payload.customerId;
+      if (Array.isArray(payload.address)) {
+        payload.address = payload.address.filter(id => id && mongoose.Types.ObjectId.isValid(id));
+      } else {
+        delete payload.address;
+      }
+      return payload;
+    };
 
     let customerExists;
     const targetCustomerId = customer?._id || customer?.customerId;
@@ -36,7 +63,7 @@ exports.valuationMaster = async (req, res) => {
       if (customerExists) {
         customerExists = await Customer.findByIdAndUpdate(
           customerExists._id,
-          customer,
+          { $set: sanitizeCustomerPayload(customer) },
           { new: true },
         );
       } else if (customer?.email) {
@@ -45,11 +72,11 @@ exports.valuationMaster = async (req, res) => {
         });
 
         if (!customerExists) {
-          customerExists = await Customer.create(customer);
+          customerExists = await Customer.create(sanitizeCustomerPayload(customer));
         } else {
           customerExists = await Customer.findByIdAndUpdate(
             customerExists._id,
-            customer,
+            { $set: sanitizeCustomerPayload(customer) },
             { new: true },
           );
         }
@@ -62,11 +89,11 @@ exports.valuationMaster = async (req, res) => {
       if (customerExists) {
         customerExists = await Customer.findByIdAndUpdate(
           customerExists._id,
-          customer,
+          { $set: sanitizeCustomerPayload(customer) },
           { new: true },
         );
       } else {
-        customerExists = await Customer.create(customer);
+        customerExists = await Customer.create(sanitizeCustomerPayload(customer));
       }
     }
 
@@ -88,52 +115,110 @@ exports.valuationMaster = async (req, res) => {
         ? "Sent"
         : "Draft";
 
+    if (!customerExists) {
+      if (customer && (customer.firstName || customer.name || customer.email || customer.mobile || customer.phone)) {
+        customerExists = await Customer.create(sanitizeCustomerPayload(customer));
+      }
+    }
+
+    if (!customerExists && !jobId) {
+      return res.status(400).json({ error: "A valid customer is required to create a job." });
+    }
+
     if (jobId && mongoose.Types.ObjectId.isValid(jobId)) {
       job = await JobSchedule.findById(jobId);
       if (!job) {
-        job = await JobSchedule.create({ status: jobStatus });
+        if (!customerExists) {
+          return res.status(400).json({ error: "Customer is required to create a job schedule." });
+        }
+        job = await JobSchedule.create({ customer: customerExists._id, status: jobStatus });
       }
     } else {
-      job = await JobSchedule.create({ status: jobStatus });
+      if (!customerExists) {
+        return res.status(400).json({ error: "Customer is required to create a job schedule." });
+      }
+      job = await JobSchedule.create({ customer: customerExists._id, status: jobStatus });
     }
 
     // 2️⃣ **Check if Customer Exists or Create New**
 
-    // 3️⃣ **Check if Package Exists**
-    let packageExists = await Package.findById(package);
-    if (!packageExists) {
-      return res.status(404).json({ message: "Package not found" });
+    // 3️⃣ **Check if Package Exists** (optional — skip gracefully if not provided or empty)
+    let packageExists = null;
+    if (package && mongoose.Types.ObjectId.isValid(package)) {
+      packageExists = await Package.findById(package);
     }
+    const resolvedPackageId = packageExists ? packageExists._id : null;
 
-    // 4️⃣ **Handle Offers (Array of Offers)** update  or create
+    // 4️⃣ **Handle Offers (Array of Offers)** update or create idempotently
     let finance;
-    if (offer?._id) {
-      finance = await Finance.findByIdAndUpdate(
-        offer._id,
-        {
-          ...offer,
-          customer: customerExists._id,
-          package: package,
-          Status: quoteStatus,
-        },
-        { new: true },
-      );
-    } else {
-      finance = await Finance.create({
-        ...offer,
-        customer: customerExists._id,
-        package: package,
-        job: job._id,
-        Status: quoteStatus,
-      });
+    if (customerExists) {
+      const sanitizeOfferPayload = (off) => {
+        if (!off || typeof off !== 'object') return {};
+        const payload = { ...off };
+        if (!payload._id || !mongoose.Types.ObjectId.isValid(payload._id)) {
+          delete payload._id;
+        }
+        return payload;
+      };
+
+      const offerPayload = sanitizeOfferPayload(offer);
+      const validOfferId = offer?._id && mongoose.Types.ObjectId.isValid(offer._id) ? offer._id : null;
+
+      if (validOfferId) {
+        finance = await Finance.findByIdAndUpdate(
+          validOfferId,
+          {
+            ...offerPayload,
+            customer: customerExists._id,
+            package: resolvedPackageId,
+            Status: quoteStatus,
+          },
+          { new: true },
+        );
+      } else {
+        // Idempotent retry: check if a Finance quote already exists for this job
+        finance = await Finance.findOne({ job: job._id });
+        if (finance) {
+          finance = await Finance.findByIdAndUpdate(
+            finance._id,
+            {
+              ...offerPayload,
+              customer: customerExists._id,
+              package: resolvedPackageId,
+              Status: quoteStatus,
+            },
+            { new: true },
+          );
+        } else {
+          finance = await Finance.create({
+            ...offerPayload,
+            customer: customerExists._id,
+            package: resolvedPackageId,
+            job: job._id,
+            Status: quoteStatus,
+          });
+        }
+      }
     }
 
     // 5️⃣ **Check if Notes Exist and Update or Create**
     let freeText;
-    if (notes?._id) {
-      freeText = await Notes.findByIdAndUpdate(notes._id, notes, { new: true });
+    const validNotesId = notes?._id && mongoose.Types.ObjectId.isValid(notes._id) ? notes._id : null;
+    const sanitizedNotes = { ...notes };
+    if (!validNotesId) {
+      delete sanitizedNotes._id;
+    }
+
+    if (validNotesId) {
+      freeText = await Notes.findByIdAndUpdate(validNotesId, sanitizedNotes, { new: true });
     } else {
-      freeText = await Notes.create({ ...notes, jobId: job._id });
+      // Idempotent retry: check if notes already exist for this job
+      freeText = await Notes.findOne({ jobId: job._id });
+      if (freeText) {
+        freeText = await Notes.findByIdAndUpdate(freeText._id, sanitizedNotes, { new: true });
+      } else {
+        freeText = await Notes.create({ ...sanitizedNotes, jobId: job._id });
+      }
     }
 
     // 6️⃣ **Handle Relocation Details (if applicable)**
@@ -155,15 +240,21 @@ exports.valuationMaster = async (req, res) => {
       })) || [];
 
     // 8️⃣ **Update JobSchedule**
-    job.customer = customerExists._id;
+    if (customerExists) job.customer = customerExists._id;
     job.status = jobStatus;
-    job.package = packageExists._id;
+    job.package = resolvedPackageId || undefined;
     job.load = load || job.load;
     job.unload = unload || job.unload;
     job.knownAddress = knownAddress ?? job.knownAddress;
     job.relocation = relocationDetails;
-    job.materials = materialData;
-    job.services = services || job.services;
+    if (Array.isArray(materials)) {
+      job.materials = materials
+        .filter(m => m && m.material && mongoose.Types.ObjectId.isValid(m.material) && Number(m.quantity) > 0)
+        .map(m => ({ material: m.material, quantity: Number(m.quantity) }));
+    }
+    if (Array.isArray(services)) {
+      job.services = services.filter(s => s && mongoose.Types.ObjectId.isValid(s));
+    }
     if (finance && finance._id) {
       if (!Array.isArray(job.offer)) {
         job.offer = [finance._id];
@@ -196,6 +287,7 @@ exports.valuationMaster = async (req, res) => {
     return res.status(200).json({
       finance,
       job,
+      customer: customerExists,
       message: "Job schedule successfully updated",
     });
   } catch (error) {
