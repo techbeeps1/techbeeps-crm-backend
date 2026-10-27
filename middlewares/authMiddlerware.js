@@ -9,7 +9,8 @@ const authMiddleware = async (req, res, next) => {
     return res.status(401).json({ msg: 'No token, authorization denied' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const decoded = jwt.verify(token, jwtSecret);
     const innerUser = (decoded && typeof decoded.user === 'object' && decoded.user !== null) ? decoded.user : {};
 
     const targetUserId = innerUser.id || innerUser.userId || innerUser._id || decoded.id || decoded.userId || decoded._id;

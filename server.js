@@ -21,7 +21,11 @@ const allowedOrigins = [
 
 server.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+  const isAllowed = !origin ||
+    allowedOrigins.includes(origin) ||
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+    (origin && /\.vercel\.app$/.test(new URL(origin).hostname));
+  if (isAllowed) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -41,6 +45,74 @@ server.get('/api/health', (req, res) => res.status(200).json({ status: 'ok', tim
 
 const { correlationMiddleware } = require("./middlewares/correlationMiddleware");
 server.use(correlationMiddleware);
+
+// MongoDB connection singleton & caching for serverless (Vercel) + persistent servers
+let cachedDbConnection = null;
+
+async function connectToMongoDB() {
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+  if (cachedDbConnection) {
+    return cachedDbConnection;
+  }
+
+  try {
+    const dns = require('dns');
+    try {
+      dns.setServers(['8.8.8.8', '8.8.4.4']);
+    } catch (dnsErr) {
+      // dns.setServers might fail in sandboxed or serverless environments
+    }
+
+    const mongoURI = process.env.MONGO_URI || process.env.MONGO_URL;
+    if (!mongoURI) {
+      throw new Error('MONGO_URI is not defined in environment variables');
+    }
+
+    cachedDbConnection = mongoose.connect(mongoURI, {
+      retryWrites: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    }).then((m) => {
+      console.log('Connected to MongoDB Atlas!');
+      return m;
+    }).catch((err) => {
+      cachedDbConnection = null;
+      console.error('Error connecting to MongoDB:', err);
+      throw err;
+    });
+
+    return await cachedDbConnection;
+  } catch (error) {
+    cachedDbConnection = null;
+    console.error('Error in connectToMongoDB:', error);
+    throw error;
+  }
+}
+
+// Eagerly initiate database connection in background
+connectToMongoDB().catch((err) => {
+  console.error('[Startup DB Connect Error]', err.message);
+});
+
+// Database connection middleware: ensures MongoDB is connected before handling DB-dependent requests
+server.use(async (req, res, next) => {
+  if (req.method === 'OPTIONS' || req.path === '/health' || req.path === '/api/health' || req.path === '/') {
+    return next();
+  }
+  try {
+    await connectToMongoDB();
+    next();
+  } catch (err) {
+    console.error('[DB Middleware Error]', err.message);
+    return res.status(500).json({
+      error: 'DATABASE_CONNECTION_ERROR',
+      message: 'Failed to connect to the database. Please verify MONGO_URI environment variable.',
+      details: err.message
+    });
+  }
+});
 
 server.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 server.use(express.static(path.join(__dirname, 'uploads')));
@@ -202,47 +274,13 @@ server.use((err, req, res, next) => {
   });
 });
 
-async function connectToMongoDB() {
-  try {
-    const dns = require('dns');
-    dns.setServers(['8.8.8.8', '8.8.4.4']);
-    const mongoURI = process.env.MONGO_URI;
-    if (!mongoURI) {
-      throw new Error('MONGO_URI is not defined in environment variables');
-    }
-    await mongoose.connect(mongoURI, {
-      // useNewUrlParser: true,
-      // useUnifiedTopology: true,
-      retryWrites: true,
-      serverSelectionTimeoutMS: 10000, // Increase timeout for server selection
-      socketTimeoutMS: 45000, // Increase socket timeout
-    });
-    console.log('Connected to MongoDB Atlas!');
-  } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
-  }
-}
-
-
-// async function main() {
-//   await mongoose.connect("mongodb://127.0.0.1:27017/userDB", {
-//     useNewUrlParser: true,
-//     useUnifiedTopology: true,
-//     retryWrites: true,
-//     serverSelectionTimeoutMS: 10000, // Increase timeout for server selection
-//     socketTimeoutMS: 45000, // Increase socket timeout
-//   });
-//   console.log("db connected to localhost");
-// }
-
-// main().catch((err) => console.log(err));
-
 async function startServer() {
   try {
-    server.listen(8080, () => {
-      console.log("Server started on port 8080");
-    });
     await connectToMongoDB();
+    const port = process.env.PORT || 8080;
+    server.listen(port, () => {
+      console.log(`Server started on port ${port}`);
+    });
   } catch (error) {
     console.error("Failed to start server:", error);
   }

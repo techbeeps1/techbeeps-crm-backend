@@ -89,12 +89,16 @@ const loginUser = async (req, res) => {
       access: userAccess,
       username: user.username,
     };
+    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
     jwt.sign(
       payload,
-      process.env.JWT_SECRET,
+      jwtSecret,
       { expiresIn: "100h" },
       (err, token) => {
-        if (err) throw err;
+        if (err) {
+          console.error('[loginUser jwt.sign error]', err);
+          return res.status(500).json({ msg: "Server error", details: err.message });
+        }
         const userObj = user.toObject ? user.toObject() : { ...(user._doc || user) };
         delete userObj.password;
         userObj.id = user._id;
@@ -112,8 +116,8 @@ const loginUser = async (req, res) => {
       }
     );
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Server error" });
+    console.error('[loginUser error]', err);
+    return res.status(500).json({ msg: "Server error", details: err.message });
   }
 };
 
