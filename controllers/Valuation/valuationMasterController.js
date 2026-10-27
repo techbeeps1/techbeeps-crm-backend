@@ -5,7 +5,9 @@ const Package = require("../../models/PackageModel");
 const Notes = require("../../models/job/notes");
 const Finance = require("../../models/finance");
 const ValuationRooms = require("../../models/Valuation/valuationRoomDetail");
+const ServiceType = require("../../models/Valuation/serviceTypeModel");
 const { validatePhoneNumber } = require("../../utils/phoneValidator");
+const { calculateCommercialTotals } = require("../../utils/moneyCalculator");
 
 exports.valuationMaster = async (req, res) => {
   try {
@@ -51,6 +53,9 @@ exports.valuationMaster = async (req, res) => {
         payload.address = payload.address.filter(id => id && mongoose.Types.ObjectId.isValid(id));
       } else {
         delete payload.address;
+      }
+      if (!payload.typeOfCustomer) {
+        payload.typeOfCustomer = payload.companyName ? 'commercial' : 'individual';
       }
       return payload;
     };
@@ -149,6 +154,16 @@ exports.valuationMaster = async (req, res) => {
     }
     const resolvedPackageId = packageExists ? packageExists._id : null;
 
+    // EXEC-14: Server-side selected services reconciliation
+    let activeServiceTypeNames = new Set();
+    if (Array.isArray(services) && services.length > 0) {
+      const validServiceIds = services.filter(s => s && mongoose.Types.ObjectId.isValid(s));
+      if (validServiceIds.length > 0) {
+        const foundServices = await ServiceType.find({ _id: { $in: validServiceIds } }).select("serviceTypeName").lean();
+        foundServices.forEach(s => activeServiceTypeNames.add(s.serviceTypeName?.toLowerCase()?.trim()));
+      }
+    }
+
     // 4️⃣ **Handle Offers (Array of Offers)** update or create idempotently
     let finance;
     if (customerExists) {
@@ -158,6 +173,35 @@ exports.valuationMaster = async (req, res) => {
         if (!payload._id || !mongoose.Types.ObjectId.isValid(payload._id)) {
           delete payload._id;
         }
+
+        // EXEC-14: Filter out unselected services from quote line items
+        if (Array.isArray(payload.items) && activeServiceTypeNames.size > 0) {
+          payload.items = payload.items.filter(item => {
+            const desc = (item?.desc || item?.description || '').toLowerCase();
+            if (!activeServiceTypeNames.has('unpacking') && desc.includes('unpacking')) return false;
+            if (!activeServiceTypeNames.has('packing') && desc.includes('packing') && !desc.includes('unpacking')) return false;
+            if (!activeServiceTypeNames.has('assembling') && (desc.includes('assembly') || desc.includes('assembling')) && !desc.includes('disassembly') && !desc.includes('disassembling')) return false;
+            if (!activeServiceTypeNames.has('disassembling') && (desc.includes('disassembly') || desc.includes('disassembling'))) return false;
+            if (!activeServiceTypeNames.has('movinglift') && desc.includes('lift')) return false;
+            if (!activeServiceTypeNames.has('storage') && desc.includes('storage')) return false;
+            if (!activeServiceTypeNames.has('insurance') && desc.includes('insurance')) return false;
+            if (!activeServiceTypeNames.has('certificate') && desc.includes('certificate')) return false;
+            return true;
+          });
+        }
+
+        // EXEC-15: Server Authoritative Money Calculation Contract
+        if (Array.isArray(payload.items)) {
+          const calc = calculateCommercialTotals(payload);
+          payload.items = calc.items;
+          payload.subTotal = calc.subTotal;
+          payload.discount = calc.discount;
+          payload.discountedPrice = calc.discountedPrice;
+          payload.btw = calc.btw;
+          payload.total = calc.total;
+          payload.vat = calc.vat;
+        }
+
         return payload;
       };
 
@@ -222,10 +266,49 @@ exports.valuationMaster = async (req, res) => {
     }
 
     // 6️⃣ **Handle Relocation Details (if applicable)**
+    let relocationDetails = job.relocation ? job.relocation.toObject ? job.relocation.toObject() : { ...job.relocation } : {};
+    relocationDetails = { ...relocationDetails, ...relocation };
 
-    let relocationDetails = job.relocation || {};
-
-    relocationDetails = { ...relocation };
+    // EXEC-14: Zero out unselected services so they contribute zero charges and zero duration
+    if (activeServiceTypeNames.size > 0 || (Array.isArray(services) && services.length === 0)) {
+      if (!activeServiceTypeNames.has('unpacking')) {
+        relocationDetails.unpacking_requiredHours = 0;
+        relocationDetails.unpacking_appliedPrice = 0;
+        relocationDetails.unpacking_requiredPackers = 0;
+      }
+      if (!activeServiceTypeNames.has('packing')) {
+        relocationDetails.packing_requiredHours = 0;
+        relocationDetails.packing_appliedPrice = 0;
+        relocationDetails.packing_requiredPackers = 0;
+      }
+      if (!activeServiceTypeNames.has('assembling')) {
+        relocationDetails.assembling_requiredHours = 0;
+        relocationDetails.assembling_appliedPrice = 0;
+        relocationDetails.assembling_requiredHandyman = 0;
+      }
+      if (!activeServiceTypeNames.has('disassembling')) {
+        relocationDetails.disassembling_requiredHours = 0;
+        relocationDetails.disassembling_appliedPrice = 0;
+        relocationDetails.disassembling_requiredHandyman = 0;
+      }
+      if (!activeServiceTypeNames.has('movinglift')) {
+        relocationDetails.movingLift_quantity = 0;
+        relocationDetails.movingLift_price = 0;
+      }
+      if (!activeServiceTypeNames.has('storage')) {
+        relocationDetails.storage_storageVolume = 0;
+        relocationDetails.storage_appliedPrice = 0;
+        relocationDetails.storage_additionCharges = 0;
+      }
+      if (!activeServiceTypeNames.has('insurance')) {
+        relocationDetails.insurance_quantity = 0;
+        relocationDetails.insurance_price = 0;
+      }
+      if (!activeServiceTypeNames.has('certificate')) {
+        relocationDetails.certificate_quantity = 0;
+        relocationDetails.certificate_price = 0;
+      }
+    }
 
     // 7️⃣ **Handle Rooms and Materials**
     let valuationRoomsData =
@@ -239,12 +322,35 @@ exports.valuationMaster = async (req, res) => {
         ...material,
       })) || [];
 
+    // EXEC-14: Standardized Address Schema Normalization
+    const normalizeAddress = (addr, existingAddr) => {
+      if (!addr && !existingAddr) return undefined;
+      const base = existingAddr ? (existingAddr.toObject ? existingAddr.toObject() : existingAddr) : {};
+      const src = addr || {};
+      return {
+        postcode: src.postcode !== undefined ? src.postcode : (base.postcode || ''),
+        houseNumber: src.houseNumber !== undefined ? src.houseNumber : (base.houseNumber || ''),
+        addition: src.addition !== undefined ? src.addition : (base.addition || ''),
+        street: src.street !== undefined ? src.street : (base.street || ''),
+        city: src.city !== undefined ? src.city : (base.city || ''),
+        country: src.country !== undefined ? src.country : (base.country || 'Netherlands'),
+        typeOfProperty: src.typeOfProperty !== undefined ? src.typeOfProperty : (base.typeOfProperty || ''),
+        floor: src.floor !== undefined ? String(src.floor) : (base.floor || ''),
+        hasElevator: src.hasElevator !== undefined ? Boolean(src.hasElevator) : Boolean(base.hasElevator),
+        deliveringBoxes: src.deliveringBoxes !== undefined ? Boolean(src.deliveringBoxes) : Boolean(base.deliveringBoxes),
+        placingSigns: src.placingSigns !== undefined ? Boolean(src.placingSigns) : Boolean(base.placingSigns),
+        applyForPermit: src.applyForPermit !== undefined ? Boolean(src.applyForPermit) : Boolean(base.applyForPermit),
+        distanceToLift: src.distanceToLift !== undefined ? String(src.distanceToLift) : (base.distanceToLift || ''),
+        distanceToApartment: src.distanceToApartment !== undefined ? String(src.distanceToApartment) : (base.distanceToApartment || '')
+      };
+    };
+
     // 8️⃣ **Update JobSchedule**
     if (customerExists) job.customer = customerExists._id;
     job.status = jobStatus;
     job.package = resolvedPackageId || undefined;
-    job.load = load || job.load;
-    job.unload = unload || job.unload;
+    if (load || job.load) job.load = normalizeAddress(load, job.load);
+    if (unload || job.unload) job.unload = normalizeAddress(unload, job.unload);
     job.knownAddress = knownAddress ?? job.knownAddress;
     job.relocation = relocationDetails;
     if (Array.isArray(materials)) {

@@ -69,7 +69,8 @@ app.use((req, res, next) => {
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Correlation-ID');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Correlation-ID');
   if (req.method === 'OPTIONS') {
     res.sendStatus(204);
     return;
@@ -286,9 +287,8 @@ async function startServer() {
       notifyAboutOnlinePeople();
     });
 
-    const query = url.parse(req.url, true).query;
-    if (query && query.token) {
-      const token = query.token;
+    const authenticateWsConnection = (token) => {
+      if (!token) return;
       jwt.verify(token, jwtSecret, {}, async (err, userData) => {
         if (err) {
           console.error('WS JWT verification error:', err.message);
@@ -312,11 +312,24 @@ async function startServer() {
         // Notify all clients now that this user has successfully connected & authenticated
         notifyAboutOnlinePeople();
       });
+    };
+
+    // Backward-compatibility fallback: Check URL query parameter if present
+    const query = url.parse(req.url, true).query;
+    if (query && query.token) {
+      authenticateWsConnection(query.token);
     }
 
     connection.on('message', async (message) => {
       try {
         const messageData = JSON.parse(message.toString());
+
+        // Safe message-based WebSocket authentication (no token exposed in URL)
+        if (messageData.type === 'auth' && messageData.token) {
+          authenticateWsConnection(messageData.token);
+          return;
+        }
+
         if (messageData.type === 'getOnline') {
           const onlineList = [...wss.clients]
             .filter(c => c.readyState === ws.OPEN && c.userId)

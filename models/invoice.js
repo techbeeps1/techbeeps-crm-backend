@@ -46,12 +46,19 @@ const invoiceSchema = new mongoose.Schema({
       type: Schema.Types.ObjectId,
       ref: 'SalesGroup',
     },
+    componentId: { type: String },
+    isManual: { type: Boolean, default: false },
+    manualOverride: { type: Boolean, default: false },
+    manualReason: { type: String },
     description: { type: String },
     quantity: { type: Number },
     price: { type: Number },
     btw: { type: String }
   }],
-  paid: { type: Number, default: "00" },
+  paid: { type: Number, default: 0 },
+  credited: { type: Number, default: 0 },
+  balanceDue: { type: Number },
+  dueDate: { type: Date },
   payment: { type: String, default: "Unpaid" },
   vat: { type: String },
   subTotal: { type: Number },
@@ -63,28 +70,70 @@ const invoiceSchema = new mongoose.Schema({
     ref: 'taxTypeSalesGroup',
   },
   remark: {type: String},
-
+  capabilityToken: {
+    type: String,
+    unique: true,
+    sparse: true,
+    index: true,
+  },
+  tokenExpiresAt: {
+    type: Date,
+  },
+  isStaging: {
+    type: Boolean,
+    default: () => process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true',
+  },
+  idempotencyKey: {
+    type: String,
+    sparse: true,
+    index: true,
+  },
+  companySnapshot: {
+    type: Object,
+    default: null,
+  },
+  customerSnapshot: {
+    type: Object,
+    default: null,
+  },
+  statutorySnapshot: {
+    type: Object,
+    default: null,
+  },
 }, { timestamps: true });
+
+invoiceSchema.index({ index: 1 }, { unique: true, sparse: true });
 
 
 
 invoiceSchema.pre('save', async function () {
   if (!this.isNew) return;
 
-  const Type = this.Type;
+  const crypto = require('crypto');
+  if (!this.capabilityToken) {
+    this.capabilityToken = crypto.randomBytes(32).toString('hex');
+  }
+  if (!this.tokenExpiresAt) {
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + 30);
+    this.tokenExpiresAt = expiry;
+  }
+
+  const isStaging = process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
+  const prefix = isStaging ? 'TEST-INV-' : '';
   const currentYear = new Date().getFullYear();
 
-  const lastInvoice = await this.constructor
-    .findOne({ Type })
-    .sort({ createdAt: -1 });
+  // If index is already explicitly provided
+  if (this.index && typeof this.index === 'string' && this.index.trim() !== '') {
+    if (isStaging && !this.index.startsWith('TEST-')) {
+      this.index = `${prefix}${this.index}`;
+    }
+    return;
+  }
 
-  const lastIndex = lastInvoice?.index
-    ? parseInt(lastInvoice.index.split('/')[1], 10)
-    : 0;
-
-  const newIndex = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
-
-  this.index = newIndex;
+  const Type = this.Type || 'invoice';
+  const { getNextInvoiceIndex } = require('../utils/sequenceGenerator');
+  this.index = await getNextInvoiceIndex(Type, isStaging, currentYear);
 });
 
 

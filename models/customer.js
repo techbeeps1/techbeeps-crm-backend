@@ -11,6 +11,7 @@ const customerSchema = new mongoose.Schema({
   typeOfCustomer: {
     type: String,
     required: true,
+    default: 'individual',
   },
   salutation: { type: String },
   firstName: { type: String },

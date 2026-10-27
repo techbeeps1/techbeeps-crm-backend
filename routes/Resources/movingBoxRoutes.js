@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const movingBoxController = require('../../controllers/Resources/movingBoxController');
 
-router.post('/box', movingBoxController.createMovingBox);
-router.get('/box', movingBoxController.getAllMovingBoxes);
-router.get('/box/:id', movingBoxController.getMovingBoxById);
-router.post('/box/:id', movingBoxController.updateMovingBox);
-router.delete('/box/:id', movingBoxController.deleteMovingBox);
+router.post(['/box', '/moving-boxes'], movingBoxController.createMovingBox);
+router.get(['/box', '/moving-boxes'], movingBoxController.getAllMovingBoxes);
+router.get(['/box/:id', '/moving-boxes/:id'], movingBoxController.getMovingBoxById);
+router.post(['/box/:id', '/moving-boxes/:id'], movingBoxController.updateMovingBox);
+router.delete(['/box/:id', '/moving-boxes/:id'], movingBoxController.deleteMovingBox);
 
 module.exports = router;

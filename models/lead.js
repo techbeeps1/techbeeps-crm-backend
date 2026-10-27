@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { validatePhoneNumber } = require('../utils/phoneValidator');
 
 const leadSchema = new mongoose.Schema({
     typeOfCustomer:String,
@@ -6,7 +7,20 @@ const leadSchema = new mongoose.Schema({
     lastName:String,
     gender:String,
     email:String,
-    contact:Number,
+    contact: {
+        type: String,
+        validate: {
+            validator: validatePhoneNumber,
+            message: 'Please enter a valid telephone/mobile number.'
+        }
+    },
+    mobile: {
+        type: String,
+        validate: {
+            validator: validatePhoneNumber,
+            message: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).'
+        }
+    },
     findUs:String,
     city:String,
     postcode:String,

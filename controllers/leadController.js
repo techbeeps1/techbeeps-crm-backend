@@ -1,15 +1,30 @@
 const mongoose = require('mongoose');
 const Lead = require("../models/lead");
 const Customer = require("../models/customer");
-const Address = require('../models/addressModel')
+const Address = require('../models/addressModel');
+const { validatePhoneNumber, normalizePhoneNumber, parseDutchName } = require('../utils/phoneValidator');
 
 exports.createLead = async (req, res) => {
   try {
     const { _id, ...leadData } = req.body;
 
+    // If fullName is provided and firstName/lastName are not, parse Dutch name
+    if (leadData.fullName && (!leadData.firstName || !leadData.lastName)) {
+      const parsed = parseDutchName(leadData.fullName);
+      if (!leadData.firstName) leadData.firstName = parsed.firstName;
+      if (!leadData.lastName) leadData.lastName = parsed.surname;
+    }
+
+    if (leadData.contact) {
+      leadData.contact = normalizePhoneNumber(leadData.contact);
+    }
+    if (leadData.mobile) {
+      leadData.mobile = normalizePhoneNumber(leadData.mobile);
+    }
+
     // Only update if a valid ObjectId is explicitly provided
     if (_id && mongoose.Types.ObjectId.isValid(_id)) {
-      const updatedLead = await Lead.findByIdAndUpdate(_id, leadData, { new: true });
+      const updatedLead = await Lead.findByIdAndUpdate(_id, leadData, { new: true, runValidators: true });
       if (updatedLead) {
         return res.json({
           success: true,
@@ -113,16 +128,38 @@ exports.deleteLead = async (req, res) => {
 // };
 
 exports.searchedLead = async (req, res) => {
-  const searchTerm = req.query.searchTerm.toLowerCase();
-  const leadList = await Lead.find();
+  try {
+    const rawTerm = req.query.searchTerm || req.query.q || '';
+    const searchTerm = String(rawTerm).trim().toLowerCase();
+    const cleanSearchNoSpace = searchTerm.replace(/[\s\-\(\)\.]+/g, '');
+    const leadList = await Lead.find().sort({ leadIndex: -1 });
 
-  const searchedLead = leadList.filter((leadData) => {
-    const firstName = leadData.firstName.toLowerCase();
-    const lastName = leadData.lastName.toLowerCase();
+    if (!searchTerm) {
+      return res.json(leadList);
+    }
 
-    return firstName.includes(searchTerm) || lastName.includes(searchTerm) ;
-  });
-  res.json(searchedLead); 
+    const searchedLead = leadList.filter((leadData) => {
+      const firstName = (leadData.firstName || '').toLowerCase();
+      const lastName = (leadData.lastName || '').toLowerCase();
+      const fullName = `${firstName} ${lastName}`.trim();
+      const email = (leadData.email || '').toLowerCase();
+      const contact = (leadData.contact ? String(leadData.contact) : '').replace(/[\s\-\(\)\.]+/g, '');
+      const mobile = (leadData.mobile ? String(leadData.mobile) : '').replace(/[\s\-\(\)\.]+/g, '');
+
+      return (
+        firstName.includes(searchTerm) ||
+        lastName.includes(searchTerm) ||
+        fullName.includes(searchTerm) ||
+        email.includes(searchTerm) ||
+        (cleanSearchNoSpace.length > 0 && contact.includes(cleanSearchNoSpace)) ||
+        (cleanSearchNoSpace.length > 0 && mobile.includes(cleanSearchNoSpace))
+      );
+    });
+    res.json(searchedLead);
+  } catch (error) {
+    console.error('Error in searchedLead:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 };
 
 exports.getLeadById = async (req, res) => {
@@ -174,15 +211,21 @@ exports.convertAsCustomer = async (req, res) => {
       return res.status(400).json({ error: 'Customer with this email already exists' });
     }else {
    
-      const addressData = {...data,addressType:"head"} 
-    const newAddress = new Address(addressData);
-    const savedAddress = await newAddress.save();
-    const customerData = { ...data, address: savedAddress._id,type:"Customer" }; // Add the address ID to the customer data
-    const newCustomer = new Customer(customerData);
-    await newCustomer.save();
-    
-    res.status(200).json({ success: true, message: 'customer converted', customerID: newCustomer._id });
-    }
+      const addressData = { ...data, addressType: "head" };
+      const newAddress = new Address(addressData);
+      const savedAddress = await newAddress.save();
+      const customerData = { ...data, address: savedAddress._id, type: "Customer" };
+      if (customerData.contact) {
+        customerData.contact = normalizePhoneNumber(customerData.contact);
+      }
+      if (customerData.mobile) {
+        customerData.mobile = normalizePhoneNumber(customerData.mobile);
+      }
+      const newCustomer = new Customer(customerData);
+      await newCustomer.save();
+      
+      res.status(200).json({ success: true, message: 'customer converted', customerID: newCustomer._id });
+      }
    
 
   } catch (error) {

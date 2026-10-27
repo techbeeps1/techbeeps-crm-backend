@@ -1,6 +1,6 @@
 const Customer = require("../models/customer");
 const Address = require('../models/addressModel');
-const { validatePhoneNumber } = require('../utils/phoneValidator');
+const { validatePhoneNumber, normalizePhoneNumber, parseDutchName } = require('../utils/phoneValidator');
 
 exports.customer = async (req, res) => {
   try {
@@ -29,7 +29,13 @@ exports.customer = async (req, res) => {
 
     const newAddress = new Address(req.body?.head);
     const savedAddress = await newAddress.save();
-    const customerData = { ...req.body, address: savedAddress._id }; // Add the address ID to the customer data
+    const customerData = { ...req.body, address: savedAddress._id };
+    if (customerData.mobile) {
+      customerData.mobile = normalizePhoneNumber(customerData.mobile);
+    }
+    if (customerData.contact) {
+      customerData.contact = normalizePhoneNumber(customerData.contact);
+    }
     const newCustomer = new Customer(customerData);
     await newCustomer.save();
     res.status(200).json({ message: 'customer created', customerID: newCustomer._id });
@@ -179,21 +185,24 @@ exports.deleteCustomer = async (req, res) => {
     if (dataCheck) {
       const JobSchedule = require('../models/jobSchedule');
       const Invoice = require('../models/invoice');
+      const Finance = require('../models/finance');
 
       const linkedJobsCount = await JobSchedule.countDocuments({ customer: customerId });
       const linkedInvoicesCount = await Invoice.countDocuments({ customer: customerId });
+      const linkedOffersCount = await Finance.countDocuments({ customer: customerId });
 
-      if (linkedJobsCount > 0 || linkedInvoicesCount > 0) {
+      if (linkedJobsCount > 0 || linkedInvoicesCount > 0 || linkedOffersCount > 0) {
         // Dependency-aware customer archival: Preserve document history and relational integrity
         dataCheck.status = 'Inactive';
         await dataCheck.save();
         return res.status(200).send({
           status: true,
-          msg: `Customer has active dependencies (${linkedJobsCount} linked jobs, ${linkedInvoicesCount} invoices). Customer has been archived as Inactive to preserve relational integrity.`,
+          msg: `Customer has active business dependencies (${linkedJobsCount} linked jobs, ${linkedInvoicesCount} invoices, ${linkedOffersCount} quotes). Customer has been archived as Inactive to preserve relational integrity.`,
           archived: true,
           dependencies: {
             jobs: linkedJobsCount,
-            invoices: linkedInvoicesCount
+            invoices: linkedInvoicesCount,
+            quotes: linkedOffersCount
           }
         });
       }
@@ -242,11 +251,17 @@ exports.editCustomer = async (req, res) => {
       delete updatePayload.address;
     }
 
-    if (updatePayload.mobile && !validatePhoneNumber(updatePayload.mobile)) {
-      return res.status(400).json({ error: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).' });
+    if (updatePayload.mobile) {
+      if (!validatePhoneNumber(updatePayload.mobile)) {
+        return res.status(400).json({ error: 'Please enter a valid mobile number (e.g. 06 12345678 or +31 6 12345678).' });
+      }
+      updatePayload.mobile = normalizePhoneNumber(updatePayload.mobile);
     }
-    if (updatePayload.contact && !validatePhoneNumber(updatePayload.contact)) {
-      return res.status(400).json({ error: 'Please enter a valid telephone number (e.g. 010 1234567 or +31 10 1234567).' });
+    if (updatePayload.contact) {
+      if (!validatePhoneNumber(updatePayload.contact)) {
+        return res.status(400).json({ error: 'Please enter a valid telephone number (e.g. 010 1234567 or +31 10 1234567).' });
+      }
+      updatePayload.contact = normalizePhoneNumber(updatePayload.contact);
     }
 
     const updatedCustomer = await Customer.findByIdAndUpdate(
@@ -312,17 +327,41 @@ exports.mergeCustomer = async (req, res) => {
 };
 
 exports.searchedCustomer = async (req, res) => {
-  const searchTerm = req.query.searchTerm.toLowerCase();
-  const customersList = await Customer.find();
-  const filteredCustomers = customersList.filter((customer) => {
-    const firstName = customer.firstName.toLowerCase();
-    const lastName = customer.lastName.toLowerCase();
-    const fullName = `${firstName} ${lastName}`.toLowerCase();
-    const contact = customer.contact ? customer.contact.toString().toLowerCase() : '';
+  try {
+    const rawSearch = req.query.searchTerm || req.query.q || req.query.search || '';
+    const searchTerm = String(rawSearch).trim().toLowerCase();
+    const cleanSearchNoSpace = searchTerm.replace(/[\s\-\(\)\.]+/g, '');
 
-    return firstName.includes(searchTerm) || lastName.includes(searchTerm) || fullName.includes(searchTerm) || contact.includes(searchTerm);
-  });
-  res.json(filteredCustomers);
+    const customersList = await Customer.find().populate('address', 'country').sort({ customerIndex: 1 });
+    if (!searchTerm) {
+      return res.json(customersList);
+    }
+
+    const filteredCustomers = customersList.filter((customer) => {
+      const firstName = (customer.firstName || '').toLowerCase();
+      const lastName = (customer.lastName || '').toLowerCase();
+      const fullName = `${firstName} ${lastName}`.trim();
+      const companyName = (customer.companyName || '').toLowerCase();
+      const email = (customer.email || '').toLowerCase();
+      const contact = (customer.contact ? String(customer.contact) : '').replace(/[\s\-\(\)\.]+/g, '');
+      const mobile = (customer.mobile ? String(customer.mobile) : '').replace(/[\s\-\(\)\.]+/g, '');
+
+      return (
+        firstName.includes(searchTerm) ||
+        lastName.includes(searchTerm) ||
+        fullName.includes(searchTerm) ||
+        companyName.includes(searchTerm) ||
+        email.includes(searchTerm) ||
+        (cleanSearchNoSpace.length > 0 && contact.includes(cleanSearchNoSpace)) ||
+        (cleanSearchNoSpace.length > 0 && mobile.includes(cleanSearchNoSpace))
+      );
+    });
+
+    res.json(filteredCustomers);
+  } catch (err) {
+    console.error('Error in searchedCustomer:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 // Filter the customer list based on the search term

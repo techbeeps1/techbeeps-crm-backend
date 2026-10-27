@@ -1,9 +1,15 @@
 const MovingBox = require('../../models/Resources/movingBox');
 const Supplier = require("../../models/Resources/materialSupplier");
+const { validateBoxDimensions } = require('../../utils/labourCalculator');
 
 // Create a new MovingBox
 exports.createMovingBox = async (req, res) => {
     try {
+        const { length, width, height } = req.body;
+        const validation = validateBoxDimensions({ length, width, height });
+        if (!validation.valid) {
+            return res.status(400).json({ error: validation.error });
+        }
         const movingBox = new MovingBox(req.body);
         const savedBox = await movingBox.save();
         res.status(201).json(savedBox);
@@ -67,6 +73,16 @@ exports.updateMovingBox = async (req, res) => {
                 });
             }
         }
+        if (updateData.length !== undefined || updateData.width !== undefined || updateData.height !== undefined) {
+            const checkLength = updateData.length !== undefined ? updateData.length : movingBox.length;
+            const checkWidth = updateData.width !== undefined ? updateData.width : movingBox.width;
+            const checkHeight = updateData.height !== undefined ? updateData.height : movingBox.height;
+            const validation = validateBoxDimensions({ length: checkLength, width: checkWidth, height: checkHeight });
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.error });
+            }
+        }
+
         delete updateData.inventorySuppliers;
         Object.assign(movingBox, updateData);
         try {

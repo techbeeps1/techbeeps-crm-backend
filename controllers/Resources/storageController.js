@@ -1,4 +1,5 @@
 const Storage = require('../../models/Resources/storageModel');
+const mongoose = require('mongoose');
 const CompanyDetails = require("../../models/companyModel");
 const EmailTemplate = require('../../models/reporting');
 const financial = require('../../models/documentTemplateModel');
@@ -321,7 +322,6 @@ exports.DownloadInvoicePDF = async (req, res) => {
             companyVatNumber: 'NL861234567B01',
             companyRegNumber: '81234567',
         };
-        const emailTemplate = await financial.findById(financialTemplate);
         const appSettings = await AppSettings.findOne();
 
         const data = {
@@ -337,7 +337,15 @@ exports.DownloadInvoicePDF = async (req, res) => {
             currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
         };
 
-        let html = emailTemplate.htmlContent;
+        let html = null;
+        if (financialTemplate && mongoose.Types.ObjectId.isValid(financialTemplate)) {
+            const emailTemplate = await financial.findById(financialTemplate);
+            html = emailTemplate?.htmlContent;
+        }
+        if (!html) {
+            const defTpl = await financial.findOne({ name: /warehouse.*storage/i }) || await financial.findOne({ type: 'invoice' });
+            html = defTpl?.htmlContent || '<html><body><h1>Storage Invoice</h1>{{items}}</body></html>';
+        }
 
         const pdfBuffer = await generatePdf(html, data);
 
@@ -418,7 +426,11 @@ exports.sendInvoicePDF = async (req, res) => {
             currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
         };
 
-        let html = pdfTemplate ? pdfTemplate.htmlContent : (emailTemplate.htmlContent || '<div>Invoice</div>');
+        let html = pdfTemplate ? pdfTemplate.htmlContent : (emailTemplate?.htmlContent || '');
+        if (!html) {
+            const defTpl = await financial.findOne({ name: /warehouse.*storage/i }) || await financial.findOne({ type: 'invoice' });
+            html = defTpl?.htmlContent || '<html><body><h1>Storage Invoice</h1>{{items}}</body></html>';
+        }
 
         const pdfBuffer = await generatePdf(html, data);
 
@@ -477,7 +489,7 @@ exports.sendInvoicePDF = async (req, res) => {
 };
 
 async function generatePdf(htmlContent, data) {
-  const sym = data.currencySymbol || '$';
+  const sym = data.currencySymbol || '€';
   const pos = data.currencyPosition || 'before';
   const dec = data.currencyDecimals !== undefined ? data.currencyDecimals : 2;
   const fmt = (num) => {
@@ -486,48 +498,60 @@ async function generatePdf(htmlContent, data) {
   };
 
   const items = (data.invoice && data.invoice.items) || [];
-  const itemsHtml = `
-    <table style="width: 100%; border-collapse: collapse;">
+  const rows = items
+    .map(
+      (item, idx) => {
+        const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const qty = Number(item.quantity) || 1;
+        const price = Number(item.price) || 0;
+        const lineTotal = qty * price;
+        const btw = item.btw !== undefined && item.btw !== null ? item.btw : 21;
+        return `
+        <tr style="border-bottom: 1px solid #e2e8f0; background-color: ${bg};">
+          <td style="padding: 10px 12px; color: #1e293b; font-weight: 500; font-size: 13px;">
+            ${item.description || 'Storage Rental'}
+          </td>
+          <td style="padding: 10px 10px; text-align: center; color: #475569; font-size: 13px;">
+            ${qty}
+          </td>
+          <td style="padding: 10px 12px; text-align: right; color: #475569; font-size: 13px;">
+            ${fmt(price)}
+          </td>
+          <td style="padding: 10px 12px; text-align: right; font-weight: 700; color: #0f172a; font-size: 13px;">
+            ${fmt(lineTotal)}
+          </td>
+          <td style="padding: 10px 12px; text-align: right; color: #64748b; font-size: 13px;">
+            ${btw}%
+          </td>
+        </tr>
+      `;
+      }
+    )
+    .join("");
+
+  const fullTableHtml = `
+    <table style="width: 100%; border-collapse: collapse; margin: 18px 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
       <thead>
-        <tr>
-          <th style="padding: 15px 0; width: 60%;">Description</th>
-          <th style="padding: 15px 0; width: 10%;">Quantity</th>
-          <th style="padding: 15px 0; width: 10%;">Price</th>
-          <th style="padding: 15px 0; width: 10%;">Total</th>
-          <th style="padding: 15px 0; width: 10%;">BTW (%)</th>
+        <tr style="background-color: #f1f5f9; border-bottom: 2px solid #3c50e0; color: #0f172a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          <th style="padding: 10px 12px; text-align: left; font-weight: 700; width: 45%;">Description</th>
+          <th style="padding: 10px 10px; text-align: center; font-weight: 700; width: 12%;">Qty</th>
+          <th style="padding: 10px 12px; text-align: right; font-weight: 700; width: 15%;">Unit Price</th>
+          <th style="padding: 10px 12px; text-align: right; font-weight: 700; width: 15%;">Total</th>
+          <th style="padding: 10px 12px; text-align: right; font-weight: 700; width: 13%;">BTW (%)</th>
         </tr>
       </thead>
       <tbody>
-        ${items
-          .map(
-            (item) => `
-          <tr>
-            <td style="padding:15px 0">
-              ${item.description}
-            </td>
-
-            <td style="padding:15px 0">
-              ${item.quantity}
-            </td>
-
-            <td style="padding:15px 0">
-              ${fmt(item.price)}
-            </td>
-
-            <td style="padding:15px 0">
-              ${fmt(item.quantity * item.price)}
-            </td>
-
-            <td style="padding:15px 0">
-              ${item.btw}%
-            </td>
-          </tr>
-        `
-          )
-          .join("")}
+        ${rows || '<tr><td colspan="5" style="padding: 14px; text-align: center; color: #64748b; font-style: italic;">No items specified</td></tr>'}
       </tbody>
     </table>
   `;
+
+  const isInsideTable = (htmlContent || '').includes('<tbody') && (
+    htmlContent.includes('<tbody>{{items}}') ||
+    htmlContent.includes('<tbody>\n{{items}}') ||
+    htmlContent.includes('<tbody>\r\n{{items}}')
+  );
+  const itemsHtml = isInsideTable ? rows : fullTableHtml;
 
   const populatedHtml = (htmlContent || '')
     .replace(/\$\{[^}]*\}/g, '')
@@ -553,11 +577,33 @@ async function generatePdf(htmlContent, data) {
 
     let launchOptions;
 
+    const resolveChromePath = () => {
+      const fs = require('fs');
+      const candidatePaths = [
+        process.env.CHROME_BIN,
+        process.env.CHROME_PATH,
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser'
+      ].filter(Boolean);
+
+      for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+          return p;
+        }
+      }
+      return 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+    };
+
     if (isLocal) {
       // Windows local Chrome
       launchOptions = {
-        executablePath:
-          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        executablePath: resolveChromePath(),
         headless: true,
         args: [
           '--no-sandbox',

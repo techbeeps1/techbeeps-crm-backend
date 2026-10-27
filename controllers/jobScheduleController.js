@@ -122,21 +122,13 @@ exports.jobList = async (req, res) => {
       }
     }
     const jobList = await JobSchedule.find(filter)
-      .select('customer date status load unload index') // Select only necessary fields
+      .select('customer date status load unload index package relocation services') // Preserve complete address snapshots & metadata
       .populate('customer', 'firstName lastName email contact mobile') // Include contact info
+      .populate('package', 'name priceAgree')
+      .sort({ createdAt: -1 })
       .lean(); // Converts documents to plain JS objects
-    const optimizedJobList = jobList.map(job => ({
-      ...job,
-      load: {
-        city: job?.load?.city,
-        country: job?.load?.country
-      },
-      unload: {
-        city: job?.unload?.city,
-        country: job?.unload?.country
-      }
-    }));
-    res.json({ jobList: optimizedJobList });
+
+    res.json({ jobList });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -162,41 +154,52 @@ exports.deleteJobSchedule = async (req, res) => {
 
 exports.searchedJobs = async (req, res) => {
   try {
-    if (req.query && req.query.searchTerm) {
-      const searchTerm = req.query.searchTerm.toLowerCase();
-      const jobList = await JobSchedule.find();
+    const searchTerm = (req.query?.searchTerm || '').toLowerCase().trim();
+    const jobList = await JobSchedule.find()
+      .populate('customer', 'firstName lastName email contact mobile')
+      .lean();
 
-      const searchedJobs = await Promise.all(
-        jobList.map(async (jobData) => {
-          const selectedCustomer = await Customer.findById(
-            jobData.selectedCustomer
-          );
-          if (selectedCustomer) {
-            const selectedCustomerName =
-              selectedCustomer.firstName.toLowerCase();
-            jobData.convertedselectedCustomer = selectedCustomerName;
-            return selectedCustomerName.includes(searchTerm) ? jobData : null;
-          }
-          return null;
-        })
-      );
-      const filteredJobs = searchedJobs.filter((job) => job !== null);
-      res.json(filteredJobs);
-    } else {
-      const jobList = await JobSchedule.find();
-      res.json(jobList);
+    if (!searchTerm) {
+      return res.json(jobList);
     }
+
+    const filteredJobs = jobList.filter((job) => {
+      const clientName = `${job.customer?.firstName || ''} ${job.customer?.lastName || ''}`.toLowerCase();
+      const jobIndex = `${job.index || ''}`.toLowerCase();
+      const loadLoc = `${job.load?.city || ''} ${job.load?.street || ''} ${job.load?.country || ''} ${job.load?.typeOfProperty || ''}`.toLowerCase();
+      const unloadLoc = `${job.unload?.city || ''} ${job.unload?.street || ''} ${job.unload?.country || ''} ${job.unload?.typeOfProperty || ''}`.toLowerCase();
+      return (
+        clientName.includes(searchTerm) ||
+        jobIndex.includes(searchTerm) ||
+        loadLoc.includes(searchTerm) ||
+        unloadLoc.includes(searchTerm)
+      );
+    });
+    res.json(filteredJobs);
   } catch (error) {
     console.error("Error fetching Jobs:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 exports.jobListByCustomerId = async (req, res) => {
   try {
-    const customerId = new ObjectId(req.query.customerId);
+    const rawId = req.query?.customerId;
+    if (!rawId || !ObjectId.isValid(rawId)) {
+      return res.status(400).json({ message: "Valid customerId is required" });
+    }
+    const customerId = new ObjectId(rawId);
     const jobListByCustomerId = await JobSchedule.find({
-      selectedCustomer: customerId,
-    });
+      $or: [
+        { customer: customerId },
+        { selectedCustomer: customerId }
+      ]
+    })
+      .populate('customer', 'firstName lastName email contact mobile')
+      .populate('package', 'name priceAgree')
+      .sort({ createdAt: -1 })
+      .lean();
+
     res.json({
       jobListByCustomerId: jobListByCustomerId,
     });

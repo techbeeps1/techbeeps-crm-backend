@@ -11,6 +11,11 @@ const companyDetailsSchema = new mongoose.Schema({
   companyTaxNumber: { type: String },
   companyVatNumber: { type: String },
   companyRegNumber: { type: String },
+  kvkNumber: { type: String },
+  btwNumber: { type: String },
+  bankName: { type: String, default: 'ABN AMRO Bank' },
+  iban: { type: String, default: 'NL91 ABNA 0417 1643 00' },
+  bic: { type: String, default: 'ABNANL2A' },
   logoUrl: { type: String },
 });
 

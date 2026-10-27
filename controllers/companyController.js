@@ -97,8 +97,37 @@ exports.uploadLogo = async (req, res) => {
 // Get Company Details
 exports.getCompanyDetails = async (req, res) => {
   try {
-    const company = await CompanyDetails.findOne();
-    res.status(200).json(company || {});
+    let company = await CompanyDetails.findOne();
+    if (!company) {
+      company = await CompanyDetails.create({
+        companyName: 'Universal Movers B.V.',
+        companyAddress: 'Starterspand, H.J.E. Wenckebachweg 53-M',
+        companyState: 'Noord-Holland, Amsterdam',
+        companyCountry: 'Netherlands',
+        companyEmail: 'info@universalmovers.nl',
+        companyPhone: '+31 20 123 4567',
+        companyWebsite: 'https://universalmovers.nl',
+        companyRegNumber: '81234567',
+        companyVatNumber: 'NL861234567B01',
+        companyTaxNumber: 'NL861234567B01',
+        kvkNumber: '81234567',
+        btwNumber: 'NL861234567B01',
+        bankName: 'ABN AMRO Bank',
+        iban: 'NL91 ABNA 0417 1643 00',
+        bic: 'ABNANL2A',
+        logoUrl: 'https://pub-5a1825f2dbec4d2eb0b6c533f4b0fa5f.r2.dev/logos/universal_movers_logo.png'
+      });
+    }
+    const compObj = company.toObject ? company.toObject() : { ...company };
+    compObj.kvkNumber = compObj.kvkNumber || compObj.companyRegNumber || '81234567';
+    compObj.btwNumber = compObj.btwNumber || compObj.companyVatNumber || compObj.companyTaxNumber || 'NL861234567B01';
+    compObj.companyRegNumber = compObj.kvkNumber;
+    compObj.companyVatNumber = compObj.btwNumber;
+    compObj.companyTaxNumber = compObj.btwNumber;
+    compObj.bankName = compObj.bankName || 'ABN AMRO Bank';
+    compObj.iban = compObj.iban || 'NL91 ABNA 0417 1643 00';
+    compObj.bic = compObj.bic || 'ABNANL2A';
+    res.status(200).json(compObj);
   } catch (error) {
     res.status(500).json({ message: "Server Error" });
   }
@@ -118,21 +147,37 @@ exports.saveCompanyDetails = async (req, res) => {
       companyTaxNumber,
       companyVatNumber,
       companyRegNumber,
+      kvkNumber,
+      btwNumber,
+      bankName,
+      iban,
+      bic,
       logoUrl,
     } = req.body;
 
+    const resolvedKvk = kvkNumber || companyRegNumber || '81234567';
+    const resolvedBtw = btwNumber || companyVatNumber || companyTaxNumber || 'NL861234567B01';
+    const resolvedBank = bankName || 'ABN AMRO Bank';
+    const resolvedIban = iban || 'NL91 ABNA 0417 1643 00';
+    const resolvedBic = bic || 'ABNANL2A';
+
     let company = await CompanyDetails.findOne();
     if (company) {
-      company.companyName = companyName;
-      company.companyAddress = companyAddress;
-      company.companyState = companyState;
-      company.companyCountry = companyCountry;
-      company.companyEmail = companyEmail;
-      company.companyPhone = companyPhone;
-      company.companyWebsite = companyWebsite;
-      company.companyTaxNumber = companyTaxNumber;
-      company.companyVatNumber = companyVatNumber;
-      company.companyRegNumber = companyRegNumber;
+      company.companyName = companyName || company.companyName;
+      company.companyAddress = companyAddress || company.companyAddress;
+      company.companyState = companyState || company.companyState;
+      company.companyCountry = companyCountry || company.companyCountry;
+      company.companyEmail = companyEmail || company.companyEmail;
+      company.companyPhone = companyPhone || company.companyPhone;
+      company.companyWebsite = companyWebsite || company.companyWebsite;
+      company.companyTaxNumber = resolvedBtw;
+      company.companyVatNumber = resolvedBtw;
+      company.companyRegNumber = resolvedKvk;
+      company.kvkNumber = resolvedKvk;
+      company.btwNumber = resolvedBtw;
+      company.bankName = resolvedBank;
+      company.iban = resolvedIban;
+      company.bic = resolvedBic;
       if (logoUrl) company.logoUrl = logoUrl;
     } else {
       company = new CompanyDetails({
@@ -143,9 +188,14 @@ exports.saveCompanyDetails = async (req, res) => {
         companyEmail,
         companyPhone,
         companyWebsite,
-        companyTaxNumber,
-        companyVatNumber,
-        companyRegNumber,
+        companyTaxNumber: resolvedBtw,
+        companyVatNumber: resolvedBtw,
+        companyRegNumber: resolvedKvk,
+        kvkNumber: resolvedKvk,
+        btwNumber: resolvedBtw,
+        bankName: resolvedBank,
+        iban: resolvedIban,
+        bic: resolvedBic,
         logoUrl,
       });
     }

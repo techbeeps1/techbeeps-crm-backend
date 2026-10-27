@@ -3,7 +3,7 @@ const router = express.Router();
 const taskController = require('../controllers/taskController');
 const roleMiddleware = require('../middlewares/roleMiddleware');
 
-router.post('/', roleMiddleware('Admin'), taskController.createTask);
+router.post('/', roleMiddleware(['Admin', 'Staff', 'Agent']), taskController.createTask);
 
 router.get('/', taskController.getTasks);
 

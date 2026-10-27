@@ -94,7 +94,8 @@ function renderEmailTemplate(htmlContent, context = {}) {
   let rendered = htmlContent.replace(TECHBEEPS_LOGO_REGEX, activeLogo);
 
   const invId = inv._id || inv.id || '';
-  const acceptQuoteUrl = context.acceptQuoteUrl || context.quoteUrl || context.link || (invId ? `https://universal-movers-front.vercel.app/quotes/accept/${invId}` : 'https://universal-movers-front.vercel.app');
+  const tokenIdentifier = inv.capabilityToken || context.capabilityToken || invId;
+  const acceptQuoteUrl = context.acceptQuoteUrl || context.quoteUrl || context.link || (tokenIdentifier ? `https://universal-movers-front.vercel.app/quotes/accept/${tokenIdentifier}` : 'https://universal-movers-front.vercel.app');
   const otpVal = context.otp || ext.otp || (context.data && context.data.otp) || '';
 
   // 2. Prepare comprehensive merged data map

@@ -5,20 +5,18 @@ const {
   getAllActivities,
   getActivityById,
   updateActivity,
-  deleteActivity,clearAllActivities
+  deleteActivity,
+  clearAllActivities
 } = require("../controllers/activityController");
+const authMiddleware = require("../middlewares/authMiddlerware");
+const roleMiddleware = require("../middlewares/roleMiddleware");
 
 router.post("/", createActivity);
 
-router.get("/", getAllActivities);
-
-router.get("/:id", getActivityById);
-
-router.put("/:id", updateActivity);
-
-router.delete("/:id", deleteActivity);
-
-router.delete("/", clearAllActivities);
-
+router.get("/", authMiddleware, getAllActivities);
+router.get("/:id", authMiddleware, getActivityById);
+router.put("/:id", authMiddleware, roleMiddleware(['Admin', 'Staff', 'Agent']), updateActivity);
+router.delete("/:id", authMiddleware, roleMiddleware('Admin'), deleteActivity);
+router.delete("/", authMiddleware, roleMiddleware('Admin'), clearAllActivities);
 
 module.exports = router;

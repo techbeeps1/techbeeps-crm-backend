@@ -4,14 +4,16 @@ const roleMiddleware = (requiredRole) => {
       return res.status(401).json({ msg: 'Unauthorized' });
     }
     // Admin always has full privileges
-    if (req.user.role === 'Admin') {
+    if (req.user.role && String(req.user.role).toLowerCase() === 'admin') {
       return next();
     }
+    const userRole = String(req.user.role || '').toLowerCase();
     if (Array.isArray(requiredRole)) {
-      if (!requiredRole.includes(req.user.role)) {
+      const allowedRoles = requiredRole.map(r => String(r).toLowerCase());
+      if (!allowedRoles.includes(userRole)) {
         return res.status(403).json({ msg: 'Access denied: Insufficient privileges' });
       }
-    } else if (req.user.role !== requiredRole) {
+    } else if (userRole !== String(requiredRole).toLowerCase()) {
       return res.status(403).json({ msg: 'Access denied: Insufficient privileges' });
     }
     next();

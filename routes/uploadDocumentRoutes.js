@@ -2,7 +2,9 @@ const express = require("express");
 const router = express.Router();
 const uploadDocumentController = require("../controllers/uploadDocumentController");
 const Document = require("../models/document");
-// const upload = require ('../view/multerFileUpload');
+const authMiddleware = require("../middlewares/authMiddlerware");
+
+router.use(authMiddleware);
 
 // router.route('/uploadDocument').post(upload.single('file'), uploadDocumentController.uploadDocument)
 const { Upload } = require("@aws-sdk/lib-storage");
