@@ -21,19 +21,10 @@ const APPROVED_COMPANY_DETAILS = {
   logoUrl: 'https://pub-5a1825f2dbec4d2eb0b6c533f4b0fa5f.r2.dev/logos/universal_movers_logo.png',
 };
 
+const { formatAmsterdamDate } = require('./timezoneUtil');
+
 function formatDutchDate(val) {
-  if (!val) return '';
-  if (typeof val === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(val)) {
-    return val;
-  }
-  const d = new Date(val);
-  if (isNaN(d.getTime())) {
-    return String(val);
-  }
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+  return formatAmsterdamDate(val);
 }
 
 function formatCustomerAddress(addr) {

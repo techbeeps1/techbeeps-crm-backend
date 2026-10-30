@@ -19,6 +19,7 @@ const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
 const { calculateCommercialTotals, roundToCents } = require('../utils/moneyCalculator');
 const { resolveTaxRate } = require('../utils/taxCatalog');
 const { validateAcceptanceEligibility, executeAcceptance } = require('../utils/quoteAcceptanceEngine');
+const { dispatchOutboxEmail, EMAIL_EVENTS } = require('../utils/emailOutboxService');
 
 const sanitizeFinancePayload = async (data) => {
   if (!data) return data;
@@ -68,6 +69,16 @@ const sanitizeFinancePayload = async (data) => {
 exports.finance = async (req, res) => {
   try {
     const sanitizedBody = await sanitizeFinancePayload(req.body);
+
+    // EXEC-28: Block direct creation in Accepted status
+    if (sanitizedBody && sanitizedBody.Status && sanitizedBody.Status.toLowerCase() === 'accepted') {
+      return res.status(422).json({
+        error: 'DIRECT_ACCEPTED_CREATION_BLOCKED',
+        msg: 'Quotations cannot be directly created in Accepted status. Quotations must be created in Draft/Sent and accepted through the official acceptance workflow.',
+        message: 'Quotations cannot be directly created in Accepted status. Quotations must be created in Draft/Sent and accepted through the official acceptance workflow.'
+      });
+    }
+
     let finance = new Finance(sanitizedBody);
     const financeData = await finance.save();
     res.json(financeData);
@@ -217,6 +228,32 @@ exports.updateInvoice = async (req, res) => {
     const isObjectId = mongoose.Types.ObjectId.isValid(id);
     const query = isObjectId ? { $or: [{ _id: id }, { capabilityToken: id }] } : { capabilityToken: id };
 
+    // EXEC-28: Fetch existing quote to ensure immutable snapshot preservation
+    const existingQuote = await Finance.findOne(query);
+    if (!existingQuote) {
+      return res.status(404).json({
+        message: 'Invoice not found',
+      });
+    }
+
+    // Freeze accepted quotes: immutable agreement snapshot
+    if (existingQuote.acceptance?.isAccepted || (existingQuote.Status && existingQuote.Status.toLowerCase() === 'accepted')) {
+      return res.status(422).json({
+        error: 'MUTATION_OF_ACCEPTED_QUOTE_BLOCKED',
+        msg: 'Cannot modify an accepted quotation. The accepted agreement is frozen and immutable. Create a new revision to propose changes.',
+        message: 'Cannot modify an accepted quotation. The accepted agreement is frozen and immutable. Create a new revision to propose changes.'
+      });
+    }
+
+    // Freeze superseded quotes
+    if (existingQuote.isSuperseded || (existingQuote.Status && existingQuote.Status.toLowerCase() === 'superseded')) {
+      return res.status(409).json({
+        error: 'QUOTE_SUPERSEDED',
+        msg: 'Cannot modify a superseded quotation version. Edit the latest active version instead.',
+        message: 'Cannot modify a superseded quotation version. Edit the latest active version instead.'
+      });
+    }
+
     let payloadToSave = await sanitizeFinancePayload(updatedData);
 
     const updatedInvoice = await Finance.findOneAndUpdate(
@@ -264,7 +301,7 @@ exports.financeDetail = async (req, res) => {
     }).populate('contactPerson', 'username').populate('package', 'name type_job priceAgree vat ignoreRules offers').populate('financialTemplate', !template && 'name').populate('items.salesgroup', 'name').populate({
       path: 'job',
       populate: { path: 'package' }
-    });
+    }).populate('parentQuote', 'index version Status total').populate('supersededBy', 'index version Status total');
 
     if (!finance) {
       return res.status(404).json({ message: "Quotation not found" });
@@ -288,6 +325,7 @@ exports.financeDetail = async (req, res) => {
     // If request is from an unauthenticated public recipient, sanitize DTO
     if (!token) {
       const { formatCustomerAddress, computeStatutoryTaxBreakdown, formatDutchDate } = require('../utils/statutoryInvoice');
+      const { formatEnumDisplay, ENUM_TRANSLATIONS } = require('../utils/dutchLocaleUtil');
       const rawBreakdown = computeStatutoryTaxBreakdown(calc.items, calc.subTotal, calc.discount);
       const taxBreakdown = {
         rates: (rawBreakdown || []).map(r => ({
@@ -340,7 +378,14 @@ exports.financeDetail = async (req, res) => {
         tokenExpiresAt: finance.tokenExpiresAt,
         acceptedAt: finance.acceptedAt,
         acceptance: finance.acceptance,
+        statusLabel: formatEnumDisplay(finance.Status, 'en'),
+        statusLabelEn: formatEnumDisplay(finance.Status, 'en'),
+        pricingType: finance.package?.priceAgree || 'fixed_price',
+        pricingTypeLabel: formatEnumDisplay(finance.package?.priceAgree || 'fixed_price', 'en'),
+        pricingTypeLabelEn: formatEnumDisplay(finance.package?.priceAgree || 'fixed_price', 'en'),
         paymentOption: finance.paymentOption,
+        paymentOptionLabel: formatEnumDisplay(finance.paymentOption, 'en'),
+        paymentOptionLabelEn: formatEnumDisplay(finance.paymentOption, 'en'),
         commercialTerms: {
           quoteValidityDays: 30,
           depositPercentage: 25,
@@ -677,6 +722,13 @@ async function generatePdf(htmlContent, data) {
     populatedHtml = populatedHtml.replace(/<div class="totals-card"[^>]*>[\s\S]*?<\/div>\s*<\/div>/i, totalsBreakdownHtml.trim());
   }
 
+  // EXEC-27: Eradicate raw implementation enums in PDFs
+  const { ENUM_TRANSLATIONS } = require('../utils/dutchLocaleUtil');
+  for (const [rawKey, trans] of Object.entries(ENUM_TRANSLATIONS)) {
+    const regex = new RegExp(`\\b${rawKey}\\b`, 'g');
+    populatedHtml = populatedHtml.replace(regex, trans.en);
+  }
+
   let browser;
 
   try {
@@ -758,10 +810,11 @@ async function generatePdf(htmlContent, data) {
 
 }
 exports.createInvoicePDF = async (req, res) => {
-  const { Id, emailTemplateId, content } = req.body;
+  const { Id, emailTemplateId, content, eventType: reqEventType } = req.body;
   if (!ObjectId.isValid(Id)) {
     return res.status(400).send('Invalid Invoice ID');
   }
+  const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
   try {
     const invoice = await Finance.findById(Id)
       .populate('customer')
@@ -772,115 +825,378 @@ exports.createInvoicePDF = async (req, res) => {
     let company = await CompanyDetails.findOne();
     if (!company) {
       company = {
-        companyName: 'Universal Movers',
-        email: process.env.SMTP_USER || 'info@universalmovers.nl',
+        companyName: 'Universal Movers B.V.',
+        companyEmail: process.env.SMTP_USER || 'info@universalmovers.nl',
       };
     }
 
     const appSettings = await AppSettings.findOne();
 
-    let emailTemplate = null;
-    if (emailTemplateId && ObjectId.isValid(emailTemplateId)) {
-      emailTemplate = await EmailTemplate.findById(emailTemplateId);
-    }
-    if (!emailTemplate && appSettings?.emailTemplates?.thankyou && ObjectId.isValid(appSettings.emailTemplates.thankyou)) {
-      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.thankyou);
-    }
-    if (!emailTemplate && appSettings?.emailTemplates?.quote && ObjectId.isValid(appSettings.emailTemplates.quote)) {
-      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.quote);
-    }
-    if (!emailTemplate) {
-      emailTemplate = await EmailTemplate.findOne({
-        $or: [
-          { name: { $regex: /thank|quote|accept|offer/i } },
-          { documentType: { $regex: /thank|quote|accept|offer/i } },
-        ]
-      }) || await EmailTemplate.findOne();
+    // Determine canonical event
+    let eventType = reqEventType;
+    if (!eventType) {
+      if (invoice.Status === 'Accepted' || invoice.acceptance?.isAccepted) {
+        eventType = EMAIL_EVENTS.QUOTE_ACCEPTED;
+      } else {
+        eventType = EMAIL_EVENTS.QUOTE_SENT;
+      }
     }
 
-    let emailHtml = emailTemplate?.htmlContent || `
-      <p>Dear {{customer.firstName}},</p>
-      <p>Thank you for accepting Quotation # {{invoice.index}} from {{company.companyName}}.</p>
-      <p>We have successfully received your confirmation and will be in touch shortly.</p>
-      <p>Best regards,<br>{{company.companyName}}</p>
-    `;
+    // Prepare PDF attachment if required
+    let attachments = [];
+    if (!content) {
+      const data = {
+        company: company,
+        customer: invoice.customer || {},
+        invoice: invoice,
+        code: `/${invoice._id}`,
+        currency: appSettings?.currency || 'EUR',
+        currencySymbol: appSettings?.currencySymbol || '€',
+        currencyPosition: appSettings?.currencyPosition || 'before',
+        currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
+      };
 
-    const data = {
-      company: company,
-      customer: invoice.customer || {},
-      invoice: invoice,
-      code: `/${invoice._id}`,
-      currency: appSettings?.currency || 'EUR',
-      currencySymbol: appSettings?.currencySymbol || '€',
-      currencyPosition: appSettings?.currencyPosition || 'before',
-      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
-    };
+      let html = invoice.financialTemplate?.htmlContent;
+      if (!html) {
+        const defaultTemplate = await DocumentTemplate.findOne({
+          $or: [
+            { type: 'offer' },
+            { type: 'quote' },
+            { name: /standard quotation/i },
+            { name: /quotation/i },
+            { name: /quote/i }
+          ]
+        });
+        html = defaultTemplate?.htmlContent || '<html><body><h1>Quotation</h1></body></html>';
+      }
 
-    let html = invoice.financialTemplate?.htmlContent;
-    let pdfBuffer = null;
-    if (!content && html) {
       try {
-        pdfBuffer = await generatePdf(html, data);
+        const pdfBuffer = await generatePdf(html, data);
+        if (pdfBuffer) {
+          attachments.push({
+            filename: `Quotation_${invoice.index || invoice._id}.pdf`,
+            content: pdfBuffer,
+            contentType: 'application/pdf',
+          });
+        }
       } catch (pdfErr) {
         console.error("PDF generation skipped in createInvoicePDF:", pdfErr.message);
       }
     }
 
+    const recipient = invoice.customer?.email;
     const quoteCode = invoice.capabilityToken ? `/${invoice.capabilityToken}` : `/${invoice._id}`;
-    emailHtml = renderEmailTemplate(emailHtml || '', {
-      company,
-      customer: invoice.customer || {},
-      invoice,
-      code: quoteCode,
-      capabilityToken: invoice.capabilityToken,
-      currency: appSettings?.currency || 'EUR',
-      currencySymbol: appSettings?.currencySymbol || '€',
-    });
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+    const dispatchResult = await dispatchOutboxEmail({
+      eventType,
+      recipient,
+      emailTemplateId,
+      context: {
+        company,
+        customer: invoice.customer || {},
+        invoice,
+        code: quoteCode,
+        capabilityToken: invoice.capabilityToken,
+        currency: appSettings?.currency || 'EUR',
+        currencySymbol: appSettings?.currencySymbol || '€',
       },
+      attachments,
+      idempotencyKey,
     });
 
-    const mailOptions = {
-      from: process.env.SMTP_USER,
-      to: invoice.customer?.email,
-      subject: `Quotation # ${invoice.index} from ${company.companyName}`,
-      html: emailHtml,
-      attachments: (!content && pdfBuffer) ? [{
-        filename: `Quotation_${invoice.index || invoice._id}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf'
-      }] : undefined,
-    };
-
-    const newEmail = new Email({
-      from: process.env.SMTP_USER,
-      recipient: invoice.customer?.email,
-      subject: mailOptions.subject,
-      htmlContent: mailOptions.html,
-      offer: invoice._id,
-      customer: invoice.customer?._id
-    });
-    const savedEmail = await newEmail.save();
-
-    if (invoice.customer?.email) {
-      try {
-        await transporter.sendMail(mailOptions);
-      } catch (smtpErr) {
-        console.error("SMTP delivery warning:", smtpErr.message);
-      }
+    if (!dispatchResult.success && dispatchResult.blocked) {
+      return res.status(dispatchResult.statusCode || 422).json({
+        error: dispatchResult.errorCode,
+        message: dispatchResult.message,
+        missing: dispatchResult.missing,
+      });
     }
 
-    return res.status(200).send(savedEmail._id);
+    return res.status(200).send(dispatchResult.emailId);
   } catch (error) {
     console.error("Error generating or sending PDF:", error);
     return res.status(500).send("Error generating or sending PDF");
+  }
+};
+
+/**
+ * EXEC-28: Controlled Quotation Revision Workflow
+ * Clones target quotation into a new version (v2, v3...), marks predecessor as superseded,
+ * resets acceptance state, generates fresh capability token & 30-day validity, and logs activity.
+ */
+exports.reviseQuotation = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const query = isObjectId ? { $or: [{ _id: id }, { capabilityToken: id }] } : { capabilityToken: id };
+
+    const targetQuote = await Finance.findOne(query);
+    if (!targetQuote) {
+      return res.status(404).json({
+        error: 'QUOTE_NOT_FOUND',
+        message: 'Quotation not found.',
+      });
+    }
+
+    // If already superseded, reject revision on superseded predecessor
+    if (targetQuote.isSuperseded) {
+      return res.status(409).json({
+        error: 'QUOTE_ALREADY_SUPERSEDED',
+        message: 'This quotation has already been superseded by a newer revision.',
+        supersededBy: targetQuote.supersededBy,
+      });
+    }
+
+    const currentVersion = targetQuote.version || 1;
+    const newVersion = currentVersion + 1;
+
+    // Calculate revision index: e.g. "TEST-QUO-2026/0099" -> "TEST-QUO-2026/0099-v2"
+    const rawIndex = targetQuote.index || '';
+    const baseIndex = rawIndex.replace(/-v\d+$/i, '');
+    const newIndex = baseIndex ? `${baseIndex}-v${newVersion}` : undefined;
+
+    const crypto = require('crypto');
+    const freshCapabilityToken = crypto.randomBytes(32).toString('hex');
+    const freshTokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    // Deep clone line items
+    const clonedItems = (targetQuote.items || []).map((item) => ({
+      salesgroup: item.salesgroup?._id || item.salesgroup,
+      componentId: item.componentId,
+      isManual: item.isManual,
+      manualOverride: item.manualOverride,
+      manualReason: item.manualReason,
+      description: item.description,
+      quantity: item.quantity,
+      price: item.price,
+      btw: item.btw,
+    }));
+
+    // Clone jobinput if present
+    const clonedJobinput = targetQuote.jobinput ? JSON.parse(JSON.stringify(targetQuote.jobinput)) : {};
+
+    const revisionDoc = new Finance({
+      index: newIndex,
+      customer: targetQuote.customer,
+      contactPerson: targetQuote.contactPerson,
+      package: targetQuote.package,
+      financialTemplate: targetQuote.financialTemplate,
+      job: targetQuote.job,
+      btw: targetQuote.btw,
+      reference: targetQuote.reference,
+      discount: targetQuote.discount || 0,
+      discountedPrice: targetQuote.discountedPrice || 0,
+      discount_description: targetQuote.discount_description,
+      year: new Date().getFullYear(),
+      Status: 'Draft',
+      note: targetQuote.note,
+      ignoreRules: targetQuote.ignoreRules,
+      jobinput: clonedJobinput,
+      items: clonedItems,
+      paid: 0,
+      payment: 'Unpaid',
+      vat: targetQuote.vat,
+      subTotal: targetQuote.subTotal,
+      total: targetQuote.total,
+      date: new Date(),
+      expire_date: freshTokenExpiry,
+      version: newVersion,
+      isSuperseded: false,
+      supersededBy: null,
+      parentQuote: targetQuote._id,
+      rootQuote: targetQuote.rootQuote || targetQuote._id,
+      capabilityToken: freshCapabilityToken,
+      tokenExpiresAt: freshTokenExpiry,
+      acceptance: {
+        isAccepted: false,
+        acceptedAt: null,
+        acceptedVersion: newVersion,
+        method: 'PUBLIC_LINK',
+      },
+    });
+
+    const savedRevision = await revisionDoc.save();
+
+    // Mark predecessor as superseded
+    targetQuote.isSuperseded = true;
+    targetQuote.supersededBy = savedRevision._id;
+    if ((targetQuote.Status || '').toLowerCase() !== 'accepted') {
+      targetQuote.Status = 'Superseded';
+    }
+    await targetQuote.save();
+
+    // Log activity
+    const staffName = req.user?.username || req.user?.name || 'Staff';
+    try {
+      const Activity = require('../models/activityModel');
+      await Activity.create({
+        type: 'offer',
+        title: `Quotation #${targetQuote.index} revised to v${newVersion} (#${savedRevision.index})`,
+        offer: savedRevision._id,
+        reference: staffName,
+        actor: 'Staff',
+        actorName: staffName,
+        status: 'success',
+        description: `Revision created from predecessor quotation #${targetQuote.index} (v${currentVersion}) by ${staffName}`,
+      });
+    } catch (actErr) {
+      console.error('Error logging revision activity:', actErr);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: `Quotation #${targetQuote.index} successfully revised to v${newVersion}`,
+      newQuote: savedRevision,
+      predecessorId: targetQuote._id,
+    });
+  } catch (error) {
+    console.error('Error in reviseQuotation:', error);
+    return res.status(500).json({
+      error: 'SERVER_ERROR',
+      message: 'Failed to create quotation revision',
+      details: error.message,
+    });
+  }
+};
+
+/**
+ * EXEC-28: Rejection / Decline transition
+ * Records customer or staff rejection with reason and timestamp.
+ */
+exports.rejectQuotation = async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+
+  try {
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const query = isObjectId ? { $or: [{ _id: id }, { capabilityToken: id }] } : { capabilityToken: id };
+
+    const quote = await Finance.findOne(query);
+    if (!quote) {
+      return res.status(404).json({
+        error: 'QUOTE_NOT_FOUND',
+        message: 'Quotation not found.',
+      });
+    }
+
+    if (quote.acceptance?.isAccepted || (quote.Status && quote.Status.toLowerCase() === 'accepted')) {
+      return res.status(422).json({
+        error: 'CANNOT_REJECT_ACCEPTED_QUOTE',
+        message: 'An accepted quotation agreement cannot be rejected.',
+      });
+    }
+
+    if (quote.isSuperseded) {
+      return res.status(409).json({
+        error: 'QUOTE_SUPERSEDED',
+        message: 'Cannot reject a superseded quotation.',
+      });
+    }
+
+    quote.Status = 'Rejected';
+    quote.rejectedAt = new Date();
+    quote.rejectionReason = reason || 'Quotation declined';
+    quote.rejectedBy = req.user ? 'STAFF' : 'CUSTOMER';
+    await quote.save();
+
+    const actor = req.user ? 'Staff' : 'Customer';
+    const actorName = req.user?.username || req.user?.name || quote.customer?.firstName || 'Customer';
+    try {
+      const Activity = require('../models/activityModel');
+      await Activity.create({
+        type: 'offer',
+        title: `Quotation #${quote.index} declined by ${actorName}`,
+        offer: quote._id,
+        reference: actorName,
+        actor: actor,
+        actorName: actorName,
+        status: 'warning',
+        description: `Quotation rejected. Reason: ${quote.rejectionReason}`,
+      });
+    } catch (actErr) {
+      console.error('Error logging rejection activity:', actErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Quotation #${quote.index} marked as rejected.`,
+      quote,
+    });
+  } catch (error) {
+    console.error('Error in rejectQuotation:', error);
+    return res.status(500).json({
+      error: 'SERVER_ERROR',
+      message: 'Failed to record rejection',
+      details: error.message,
+    });
+  }
+};
+
+/**
+ * EXEC-28: Revoke quotation (Staff only)
+ */
+exports.revokeQuotation = async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+
+  try {
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const query = isObjectId ? { $or: [{ _id: id }, { capabilityToken: id }] } : { capabilityToken: id };
+
+    const quote = await Finance.findOne(query);
+    if (!quote) {
+      return res.status(404).json({
+        error: 'QUOTE_NOT_FOUND',
+        message: 'Quotation not found.',
+      });
+    }
+
+    if (quote.acceptance?.isAccepted || (quote.Status && quote.Status.toLowerCase() === 'accepted')) {
+      return res.status(422).json({
+        error: 'CANNOT_REVOKE_ACCEPTED_QUOTE',
+        message: 'An accepted quotation agreement cannot be revoked directly.',
+      });
+    }
+
+    if (quote.isSuperseded) {
+      return res.status(409).json({
+        error: 'QUOTE_SUPERSEDED',
+        message: 'Cannot revoke a superseded quotation.',
+      });
+    }
+
+    quote.Status = 'Revoked';
+    quote.revokedAt = new Date();
+    quote.revokedReason = reason || 'Revoked by staff';
+    await quote.save();
+
+    const staffName = req.user?.username || req.user?.name || 'Staff';
+    try {
+      const Activity = require('../models/activityModel');
+      await Activity.create({
+        type: 'offer',
+        title: `Quotation #${quote.index} revoked by ${staffName}`,
+        offer: quote._id,
+        reference: staffName,
+        actor: 'Staff',
+        actorName: staffName,
+        status: 'warning',
+        description: `Quotation revoked. Reason: ${quote.revokedReason}`,
+      });
+    } catch (actErr) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Quotation #${quote.index} has been revoked.`,
+      quote,
+    });
+  } catch (error) {
+    console.error('Error in revokeQuotation:', error);
+    return res.status(500).json({
+      error: 'SERVER_ERROR',
+      message: 'Failed to revoke quotation',
+      details: error.message,
+    });
   }
 };
 

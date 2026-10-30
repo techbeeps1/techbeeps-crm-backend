@@ -10,6 +10,9 @@ router.get('/finance/:Id', financeController.financeDetail);
 router.post('/update/:id', financeController.updateInvoice);
 router.post('/accept/:id', financeController.acceptQuote);
 router.post('/on-site-accept/:id', authMiddleware, roleMiddleware(['Admin', 'Staff', 'Agent']), financeController.onSiteAcceptQuote);
+router.post('/revise/:id', authMiddleware, roleMiddleware(['Admin', 'Staff', 'Agent']), financeController.reviseQuotation);
+router.post('/reject/:id', financeController.rejectQuotation);
+router.post('/revoke/:id', authMiddleware, roleMiddleware(['Admin', 'Staff', 'Agent']), financeController.revokeQuotation);
 router.post('/send', authMiddleware, financeController.createInvoicePDF);
 router.post('/download', financeController.DownloadInvoicePDF);
 

@@ -69,6 +69,21 @@ const financeSchema = new mongoose.Schema({
     type: Schema.Types.ObjectId,
     ref: 'Finance',
   },
+  parentQuote: {
+    type: Schema.Types.ObjectId,
+    ref: 'Finance',
+  },
+  rootQuote: {
+    type: Schema.Types.ObjectId,
+    ref: 'Finance',
+  },
+  rejectionReason: { type: String },
+  rejectedAt: { type: Date },
+  rejectedBy: {
+    type: String,
+    enum: ['CUSTOMER', 'STAFF'],
+    default: 'CUSTOMER',
+  },
   revokedAt: { type: Date },
   revokedReason: { type: String },
   acceptedAt: { type: Date },

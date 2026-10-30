@@ -2,18 +2,22 @@ const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 const emailTemplateSchema = new Schema({
-    quote: { type: String ,default:""},
-    quoteReminders: { type: String ,default:""},
-    appointment: { type: String ,default:""},
-    rescheduleAppointment: { type: String ,default:""},
-    invoice: { type: String ,default:""},
-    invoiceReminder: { type: String ,default:""},
-    confirmation: { type: String ,default:""},
-    cancellation: { type: String ,default:""},
-    paymentReminder: { type: String ,default:""},
-    paymentReminder2: { type: String ,default:""},
-    thankyou: { type: String ,default:""},
-    storageInovice : { type: String ,default:""},
+    quote: { type: String, default: "" },
+    quoteReminders: { type: String, default: "" },
+    quoteAcceptance: { type: String, default: "" },
+    appointment: { type: String, default: "" },
+    rescheduleAppointment: { type: String, default: "" },
+    invoice: { type: String, default: "" },
+    invoiceReminder: { type: String, default: "" },
+    paymentReceived: { type: String, default: "" },
+    confirmation: { type: String, default: "" },
+    cancellation: { type: String, default: "" },
+    paymentReminder: { type: String, default: "" },
+    paymentReminder2: { type: String, default: "" },
+    employeeWelcome: { type: String, default: "" },
+    taskAssignment: { type: String, default: "" },
+    thankyou: { type: String, default: "" },
+    storageInovice: { type: String, default: "" },
 });
 
 const standardPriceSchema = {

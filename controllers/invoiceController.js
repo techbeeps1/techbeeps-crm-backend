@@ -20,6 +20,7 @@ const SalesGroup = require('../models/salesgroupModel');
 const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
 const { calculateCommercialTotals, roundToCents } = require('../utils/moneyCalculator');
 const { resolveTaxRate } = require('../utils/taxCatalog');
+const { dispatchOutboxEmail, EMAIL_EVENTS } = require('../utils/emailOutboxService');
 
 const sanitizeInvoicePayload = async (data) => {
   if (!data) return data;
@@ -592,6 +593,13 @@ async function generatePdf(htmlContent, data) {
     populatedHtml = populatedHtml.replace(/<div class="totals-card"[^>]*>[\s\S]*?<\/div>\s*<\/div>/i, totalsBreakdownHtml.trim());
   }
 
+  // EXEC-27: Eradicate raw implementation enums in PDFs
+  const { ENUM_TRANSLATIONS } = require('../utils/dutchLocaleUtil');
+  for (const [rawKey, trans] of Object.entries(ENUM_TRANSLATIONS)) {
+    const regex = new RegExp(`\\b${rawKey}\\b`, 'g');
+    populatedHtml = populatedHtml.replace(regex, trans.en);
+  }
+
   // If template does not explicitly contain {{taxBreakdown}} or {{paymentInstructions}},
   // append them cleanly before </body> to ensure 100% statutory Belastingdienst compliance
   if (!htmlContent.includes('taxBreakdown') && !htmlContent.includes('btwSpecification')) {
@@ -651,10 +659,11 @@ async function generatePdf(htmlContent, data) {
 }
 
 exports.createInvoicePDF = async (req, res) => {
-  const { Id, emailTemplateId, content } = req.body;
+  const { Id, emailTemplateId, content, eventType: reqEventType } = req.body;
   if (!ObjectId.isValid(Id)) {
     return res.status(400).send('Invalid Invoice ID');
   }
+  const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
   try {
     const invoice = await Invoice.findById(Id)
       .populate('customer')
@@ -665,34 +674,13 @@ exports.createInvoicePDF = async (req, res) => {
     let company = await CompanyDetails.findOne();
     if (!company) {
       company = {
-        companyName: 'Universal Movers',
-        email: process.env.SMTP_USER || 'info@universalmovers.nl',
+        companyName: 'Universal Movers B.V.',
+        companyEmail: process.env.SMTP_USER || 'info@universalmovers.nl',
       };
     }
 
     const appSettings = await AppSettings.findOne();
 
-    let emailTemplate = null;
-    if (emailTemplateId && ObjectId.isValid(emailTemplateId)) {
-      emailTemplate = await EmailTemplate.findById(emailTemplateId);
-    }
-    if (!emailTemplate && appSettings?.emailTemplates?.invoice && ObjectId.isValid(appSettings.emailTemplates.invoice)) {
-      emailTemplate = await EmailTemplate.findById(appSettings.emailTemplates.invoice);
-    }
-    if (!emailTemplate) {
-      emailTemplate = await EmailTemplate.findOne({
-        $or: [
-          { name: { $regex: /invoice|thank|quote/i } },
-          { documentType: { $regex: /invoice|thank|quote/i } },
-        ]
-      }) || await EmailTemplate.findOne();
-    }
-
-    let emailHtml = emailTemplate?.htmlContent || `
-      <p>Dear {{customer.firstName}},</p>
-      <p>Here is your Invoice # {{invoice.index}} from {{company.companyName}}.</p>
-      <p>Best regards,<br>{{company.companyName}}</p>
-    `;
     // EXEC-20: Authoritative Recalculation
     const calc = calculateCommercialTotals(invoice);
     const freshInvoice = {
@@ -706,73 +694,75 @@ exports.createInvoicePDF = async (req, res) => {
       totalVat: calc.totalVat,
       items: calc.items,
     };
-    const data = {
-      company: company,
-      customer: invoice.customer,
-      invoice: freshInvoice,
-      code: `/${invoice._id}`,
-      currency: appSettings?.currency || 'USD',
-      currencySymbol: appSettings?.currencySymbol || '$',
-      currencyPosition: appSettings?.currencyPosition || 'before',
-      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
-    };
-    let html = invoice.financialTemplate?.htmlContent;
-    if (!html) {
-      const defaultTemplate = await DocumentTemplate.findOne({
-        $or: [
-          { type: 'invoice' },
-          { name: /standard moving invoice/i },
-          { name: /invoice/i }
-        ]
-      });
-      html = defaultTemplate?.htmlContent || '<html><body><h1>Invoice</h1>{{items}}</body></html>';
+
+    let attachments = [];
+    if (!content) {
+      const data = {
+        company: company,
+        customer: invoice.customer,
+        invoice: freshInvoice,
+        code: `/${invoice._id}`,
+        currency: appSettings?.currency || 'EUR',
+        currencySymbol: appSettings?.currencySymbol || '€',
+        currencyPosition: appSettings?.currencyPosition || 'before',
+        currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
+      };
+      let html = invoice.financialTemplate?.htmlContent;
+      if (!html) {
+        const defaultTemplate = await DocumentTemplate.findOne({
+          $or: [
+            { type: 'invoice' },
+            { name: /standard moving invoice/i },
+            { name: /invoice/i }
+          ]
+        });
+        html = defaultTemplate?.htmlContent || '<html><body><h1>Invoice</h1>{{items}}</body></html>';
+      }
+      try {
+        const pdfBuffer = await generatePdf(html, data);
+        if (pdfBuffer) {
+          attachments.push({
+            filename: `Invoice_${invoice.index || invoice._id}.pdf`,
+            content: pdfBuffer,
+            contentType: 'application/pdf'
+          });
+        }
+      } catch (pdfErr) {
+        console.error("PDF generation skipped in invoice createInvoicePDF:", pdfErr.message);
+      }
     }
-    const pdfBuffer = !content && await generatePdf(html, data) || null;
 
-    emailHtml = renderEmailTemplate(emailHtml || '', {
-      company,
-      customer: invoice.customer || {},
-      invoice,
-      code: `/${invoice._id}`,
-      currency: appSettings?.currency || 'EUR',
-      currencySymbol: appSettings?.currencySymbol || '€',
+    const eventType = reqEventType || EMAIL_EVENTS.INVOICE_ISSUED;
+    const recipient = invoice.customer?.email;
+
+    const dispatchResult = await dispatchOutboxEmail({
+      eventType,
+      recipient,
+      emailTemplateId,
+      context: {
+        company,
+        customer: invoice.customer || {},
+        invoice: freshInvoice,
+        code: `/${invoice._id}`,
+        currency: appSettings?.currency || 'EUR',
+        currencySymbol: appSettings?.currencySymbol || '€',
+      },
+      attachments,
+      idempotencyKey,
     });
 
- const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+    if (!dispatchResult.success && dispatchResult.blocked) {
+      return res.status(dispatchResult.statusCode || 422).json({
+        error: dispatchResult.errorCode,
+        message: dispatchResult.message,
+        missing: dispatchResult.missing,
+      });
+    }
 
-    const mailOptions = {
-      from: process.env.SMTP_USER,
-      to: invoice.customer?.email,
-      subject: `Invoice # ${invoice.index} from ${company.companyName}`,
-      html: emailHtml,
-      attachments: !content && [{
-        filename: 'Invoice.pdf',
-        content: pdfBuffer,
-        contentType: 'application/pdf'
-      }] || null,
-    };
-    const newEmail = new Email({
-      from: process.env.SMTP_USER,
-      recipient: data.customer.email,
-      subject: mailOptions.subject,
-      htmlContent: mailOptions.html,
-      offer: invoice._id,
-      customer: data.customer._id
-    });
-    const savedEmail = await newEmail.save();
-    await transporter.sendMail(mailOptions);
-    res.status(200).send(savedEmail._id);
+    return res.status(200).send(dispatchResult.emailId);
   } catch (error) {
     console.error("Error generating or sending PDF:", error);
-    res.status(500).send(error);
+    return res.status(500).send(error.message || "Error generating or sending PDF");
   }
 };
 

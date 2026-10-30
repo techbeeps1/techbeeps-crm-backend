@@ -5,7 +5,7 @@ const activitySchema = new mongoose.Schema(
         type: {
             type: String
         },
-        status:{
+        status: {
             type: String
         },
         title: {
@@ -17,7 +17,7 @@ const activitySchema = new mongoose.Schema(
         reference: {
             type: String
         },
-        sender:{
+        sender: {
             type: String,
             default: process.env.SMTP_USER
         },
@@ -25,17 +25,41 @@ const activitySchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Finance'
         },
-        comment:{
+        comment: {
             type: String
         },
         date: {
             type: Date,
             default: Date.now,
         },
-        email:{
+        email: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Email'
-        }
+        },
+        // EXEC-27: Truthful actor and preview distinction
+        actor: {
+            type: String,
+            enum: ['Staff', 'Customer', 'System', 'Anonymous'],
+            default: 'System',
+        },
+        actorName: {
+            type: String,
+        },
+        action: {
+            type: String,
+            enum: ['PREVIEW', 'VIEW', 'SEND', 'ACCEPT', 'REJECT', 'UPDATE', 'CREATE'],
+            default: 'VIEW',
+        },
+        documentState: {
+            type: String,
+        },
+        isStaffPreview: {
+            type: Boolean,
+            default: false,
+        },
+        acknowledgementEventId: {
+            type: String,
+        },
     },
     { timestamps: true }
 );

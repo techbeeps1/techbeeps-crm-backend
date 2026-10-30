@@ -6,8 +6,8 @@ const EmailTemplate = require('../models/reporting');
 const jobSchedule = require('../models/jobSchedule');
 const Email = require('../models/Email/email');
 const User = require('../models/user');
-
-
+const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
+const { dispatchOutboxEmail, EMAIL_EVENTS } = require('../utils/emailOutboxService');
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
@@ -19,14 +19,10 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-
 exports.sendOtp = async (req, res) => {
     const { email } = req.body;
     const otp = crypto.randomInt(100000, 999999).toString();
     let user = await User.findOne({ email });
-    // if (!user) {
-    //     return res.status(400).json({ msg: 'User not exists' });
-    // }
     if (!email) {
         return res.status(400).json({ message: 'Email is required' });
     }
@@ -101,89 +97,81 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
-
-const { renderEmailTemplate } = require('../utils/emailTemplateUtil');
-
 exports.sendEmail = async (req, res) => {
-    const { emailTemplateId, extraData, job, subject } = req.body;
+    const { emailTemplateId, extraData = {}, job, subject, eventType: reqEventType } = req.body;
+    const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
     try {
         const company = await CompanyDetails.findOne();
         if (!company) {
             return res.status(404).send('Company details not found');
         }
-        const mongoose = require('mongoose');
-        const AppSettings = require('../models/appSettingModel');
-        const appSettings = await AppSettings.findOne();
 
-        let emailTemplate = null;
-        if (emailTemplateId && mongoose.Types.ObjectId.isValid(emailTemplateId)) {
-            emailTemplate = await EmailTemplate.findById(emailTemplateId);
-        }
-        if (!emailTemplate && subject) {
-            if (/appointment|reschedule|planning/i.test(subject)) {
-                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.appointment)
-                    || await EmailTemplate.findById(appSettings?.emailTemplates?.rescheduleAppointment);
-            } else if (/quote|proposal/i.test(subject)) {
-                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.quote);
-            } else if (/invoice|bill/i.test(subject)) {
-                emailTemplate = await EmailTemplate.findById(appSettings?.emailTemplates?.invoice);
-            } else if (/welcome|employee/i.test(subject)) {
-                emailTemplate = await EmailTemplate.findById('67482f4178cf7071e2d8465b');
-            }
-        }
-        if (!emailTemplate) {
-            emailTemplate = await EmailTemplate.findOne();
-        }
-
-
-        const jobDetail = await jobSchedule.findById(job).populate('customer');
-        if(job){
+        let jobDetail = null;
+        if (job) {
+            jobDetail = await jobSchedule.findById(job).populate('customer');
             if (!jobDetail) {
                 return res.status(404).send('jobDetail not found');
             }
         }
 
-        const emailHtml = renderEmailTemplate(emailTemplate.htmlContent, {
-            company,
-            customer: job ? jobDetail.customer : extraData,
-            job: jobDetail,
-            extraData,
-            data: extraData,
-        });
-      const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
-        const mailOptions = {
-            from: process.env.SMTP_USER,
-            to: job ? jobDetail?.customer?.email : extraData.email,
-            subject: subject,
-            html: emailHtml,
-        };
-        const newEmail = new Email({
-            from: process.env.SMTP_USER,
-            recipient: mailOptions.to,
-            subject: mailOptions.subject,
-            htmlContent: mailOptions.html,
-            customer: job ? (jobDetail?.customer?._id || jobDetail?.customer) : null,
-            job: job || null,
-        });
-        if (job) {
-            await jobSchedule.findByIdAndUpdate(
-                job, { status: 'Processing' },
-            );
+        // Determine canonical event type
+        let eventType = reqEventType;
+        if (!eventType) {
+            const subj = subject || '';
+            if (/survey/i.test(subj) || extraData?.appointmentType === 'Survey') {
+                if (/reschedule/i.test(subj)) eventType = EMAIL_EVENTS.SURVEY_RESCHEDULED;
+                else if (/cancel/i.test(subj)) eventType = EMAIL_EVENTS.SURVEY_CANCELLED;
+                else eventType = EMAIL_EVENTS.SURVEY_SCHEDULED;
+            } else if (/move|relocation/i.test(subj) || jobDetail) {
+                if (/reschedule/i.test(subj)) eventType = EMAIL_EVENTS.MOVE_RESCHEDULED;
+                else if (/cancel/i.test(subj)) eventType = EMAIL_EVENTS.MOVE_CANCELLED;
+                else eventType = EMAIL_EVENTS.MOVE_SCHEDULED;
+            } else if (/quote|proposal/i.test(subj)) {
+                eventType = EMAIL_EVENTS.QUOTE_SENT;
+            } else if (/invoice|bill/i.test(subj)) {
+                eventType = EMAIL_EVENTS.INVOICE_ISSUED;
+            } else if (/thank\s*you/i.test(subj)) {
+                eventType = EMAIL_EVENTS.POST_MOVE_THANKYOU;
+            } else if (/appointment|planning/i.test(subj)) {
+                eventType = /reschedule/i.test(subj) ? EMAIL_EVENTS.SURVEY_RESCHEDULED : EMAIL_EVENTS.SURVEY_SCHEDULED;
+            } else {
+                eventType = EMAIL_EVENTS.SURVEY_SCHEDULED;
+            }
         }
-        const savedEmail = await newEmail.save();
-        await transporter.sendMail(mailOptions);
-        res.status(200).send(savedEmail._id);
+
+        const recipient = jobDetail ? jobDetail?.customer?.email : (extraData?.email || req.body.recipient);
+
+        const dispatchResult = await dispatchOutboxEmail({
+            eventType,
+            recipient,
+            subject,
+            emailTemplateId,
+            context: {
+                company,
+                customer: jobDetail ? jobDetail.customer : extraData,
+                job: jobDetail,
+                appointment: extraData?.appointment || extraData,
+                extraData,
+                data: extraData,
+            },
+            idempotencyKey,
+        });
+
+        if (!dispatchResult.success && dispatchResult.blocked) {
+            return res.status(dispatchResult.statusCode || 422).json({
+                error: dispatchResult.errorCode,
+                message: dispatchResult.message,
+                missing: dispatchResult.missing,
+            });
+        }
+
+        if (job) {
+            await jobSchedule.findByIdAndUpdate(job, { status: 'Processing' });
+        }
+
+        return res.status(200).send(dispatchResult.emailId);
     } catch (error) {
         console.error("Error in sending mail:", error);
-        res.status(500).send("Error in sending mail");
+        res.status(500).send("Error in sending mail: " + error.message);
     }
 };

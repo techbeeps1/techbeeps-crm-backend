@@ -50,9 +50,9 @@ function validateAcceptanceEligibility(quote, options = {}) {
     };
   }
 
-  // Revocation / Cancellation / Declined check
+  // Revocation / Cancellation / Declined / Rejected check
   const statusLower = (quote.Status || '').toLowerCase();
-  if (['revoked', 'cancelled', 'declined'].includes(statusLower)) {
+  if (['revoked', 'cancelled', 'declined', 'rejected'].includes(statusLower)) {
     return {
       eligible: false,
       statusCode: 409,
@@ -297,6 +297,26 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
     console.warn('Non-blocking activity logging warning:', actErr.message);
   }
 
+  // EXEC-26: Dispatch Quote Acceptance Acknowledgment via Outbox (never post-move thank-you)
+  let emailDeliveryResult = null;
+  if (resolvedCustomerEmail) {
+    try {
+      const { dispatchOutboxEmail, EMAIL_EVENTS } = require('./emailOutboxService');
+      emailDeliveryResult = await dispatchOutboxEmail({
+        eventType: EMAIL_EVENTS.QUOTE_ACCEPTED,
+        recipient: resolvedCustomerEmail,
+        context: {
+          customer: quote.customer || { name: resolvedCustomerName, email: resolvedCustomerEmail, firstName: resolvedCustomerName.split(' ')[0] },
+          invoice: quote,
+          code: quote.capabilityToken ? `/${quote.capabilityToken}` : `/${quote._id}`,
+        },
+        idempotencyKey: idempotencyKey || ackEventId,
+      });
+    } catch (emailErr) {
+      console.warn('Non-blocking quote acceptance acknowledgment email warning:', emailErr.message);
+    }
+  }
+
   return {
     statusCode: 200,
     success: true,
@@ -306,6 +326,7 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
     acceptedAt: acceptedAt,
     immutableAgreementSnapshot: agreementSnapshot,
     acceptance: quote.acceptance,
+    acknowledgementEmail: emailDeliveryResult,
   };
 }
 

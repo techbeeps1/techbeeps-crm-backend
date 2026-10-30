@@ -1,11 +1,51 @@
 const Activity = require("../models/activityModel");
 
+/**
+ * Universal Movers CRM - Activity Controller
+ * EXEC-27: Truthful actor distinction and staff preview labeling.
+ * Guarantees that staff previews are NEVER recorded as customer views.
+ */
+
 // Create a new activity
 exports.createActivity = async (req, res) => {
   try {
-    const activity = new Activity(req.body);
+    const payload = { ...req.body };
+
+    const hasStaffAuth = Boolean(
+      req.user ||
+      (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) ||
+      payload.isStaffPreview
+    );
+
+    // Resolve actor truthfully
+    if (hasStaffAuth) {
+      payload.actor = 'Staff';
+      payload.actorName = req.user?.username || req.user?.email || payload.actorName || 'Staff Member';
+      payload.isStaffPreview = true;
+      payload.action = payload.action || 'PREVIEW';
+
+      // Disambiguate legacy false claims: "Customer viewed..." / "...was viewed by..." -> "Staff previewed..."
+      if (payload.title && /(customer\s+viewed|was\s+viewed|viewed\s+by)/i.test(payload.title)) {
+        payload.title = `Staff previewed quotation: ${payload.actorName}`;
+      } else if (!payload.title) {
+        payload.title = `Staff previewed quotation: ${payload.actorName}`;
+      }
+      if (payload.description && /(customer\s+viewed|was\s+viewed|viewed\s+by)/i.test(payload.description)) {
+        payload.description = `Staff previewed quotation details: ${payload.actorName}`;
+      }
+    } else {
+      // Unauthenticated / Public context
+      if (payload.actor !== 'Customer') {
+        payload.actor = payload.customer ? 'Customer' : 'Anonymous';
+        payload.actorName = payload.customer?.name || payload.actorName || 'Unauthenticated Visitor';
+      }
+      payload.isStaffPreview = false;
+      payload.action = payload.action || 'VIEW';
+    }
+
+    const activity = new Activity(payload);
     const savedActivity = await activity.save();
-    res.status(201).json('activity created');
+    res.status(201).json({ message: 'activity created', activity: savedActivity });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -13,7 +53,7 @@ exports.createActivity = async (req, res) => {
 
 // Get all activities
 exports.getAllActivities = async (req, res) => {
-    const { offer } = req.query;
+  const { offer } = req.query;
   try {
     const filter = offer ? { offer } : {};
     const activities = await Activity.find(filter).sort({ date: -1 }); // Sort by date descending
@@ -78,4 +118,3 @@ exports.clearAllActivities = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
