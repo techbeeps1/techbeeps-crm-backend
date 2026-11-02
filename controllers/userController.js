@@ -28,7 +28,30 @@ const ALL_CRM_MODULES = [
 ];
 
 const registerUser = async (req, res) => {
-  const { username, email, password, role, access } = req.body;
+  const {
+    username,
+    email,
+    password,
+    role,
+    access,
+    gender,
+    language,
+    dob,
+    telephone,
+    postCode,
+    houseNumber,
+    addition,
+    street,
+    city,
+    country,
+    inservice,
+    outofservice,
+    trailPeriod,
+    contract,
+    drivingLicense,
+    skills,
+    documentNumber,
+  } = req.body;
   try {
     let user = await User.findOne({ email });
     if (user) {
@@ -48,9 +71,28 @@ const registerUser = async (req, res) => {
       password: hashedPassword,
       role: role || "Staff",
       access: assignedAccess,
+      gender: gender || undefined,
+      language: language || undefined,
+      dob: dob ? new Date(dob) : undefined,
+      telephone: telephone || undefined,
+      postCode: postCode || undefined,
+      houseNumber: houseNumber || undefined,
+      addition: addition || undefined,
+      street: street || undefined,
+      city: city || undefined,
+      country: country || undefined,
+      inservice: inservice ? new Date(inservice) : undefined,
+      outofservice: outofservice ? new Date(outofservice) : undefined,
+      trailPeriod: trailPeriod !== undefined && !isNaN(Number(trailPeriod)) ? Number(trailPeriod) : undefined,
+      contract: contract || undefined,
+      drivingLicense: Array.isArray(drivingLicense) ? drivingLicense : [],
+      skills: Array.isArray(skills) ? skills : [],
+      documentNumber: documentNumber || undefined,
+      isActive: true,
+      isRestricted: false,
     });
     await newUser.save();
-    return res.status(201).json({ msg: "User registered successfully" });
+    return res.status(201).json({ msg: "User registered successfully", user: newUser });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Server error" });
@@ -144,34 +186,7 @@ const ProfileUser = async (req, res) => {
 
 const Allusers = async (req, res) => {
   try {
-    const users = await User.find(
-      {},
-      {
-        id: 1,
-        username: 1,
-        email: 1,
-        role: 1,
-        access: 1,
-        drivingLicense: 1,
-        skills: 1,
-        isActive: 1,
-        isRestricted: 1,
-        telephone: 1,
-        country: 1,
-        gender: 1,
-        dob: 1,
-        postCode: 1,
-        houseNumber: 1,
-        addition: 1,
-        street: 1,
-        city: 1,
-        inservice: 1,
-        outofservice: 1,
-        trailPeriod: 1,
-        contract: 1,
-        documentNumber: 1,
-      }
-    );
+    const users = await User.find({}).select("-password");
     if (!users || users.length === 0) {
       return res.status(404).json({ msg: "Users not found" });
     }
@@ -578,6 +593,38 @@ const UpdateDetails = async (req, res) => {
     delete updatePayload.id;
     delete updatePayload._id;
     delete updatePayload.userId;
+
+    // Do not overwrite password with empty/undefined string
+    if (!updatePayload.password || typeof updatePayload.password !== 'string' || updatePayload.password.trim() === '') {
+      delete updatePayload.password;
+    } else {
+      const bcryptSalt = bcrypt.genSaltSync(10);
+      updatePayload.password = await bcrypt.hash(updatePayload.password, bcryptSalt);
+    }
+
+    // Safely parse Date fields
+    if (updatePayload.dob) {
+      const d = new Date(updatePayload.dob);
+      updatePayload.dob = isNaN(d.getTime()) ? null : d;
+    }
+    if (updatePayload.inservice) {
+      const d = new Date(updatePayload.inservice);
+      updatePayload.inservice = isNaN(d.getTime()) ? null : d;
+    }
+    if (updatePayload.outofservice) {
+      const d = new Date(updatePayload.outofservice);
+      updatePayload.outofservice = isNaN(d.getTime()) ? null : d;
+    }
+    if (updatePayload.contract && typeof updatePayload.contract === 'object') {
+      if (updatePayload.contract.startDate) {
+        const d = new Date(updatePayload.contract.startDate);
+        updatePayload.contract.startDate = isNaN(d.getTime()) ? null : d;
+      }
+      if (updatePayload.contract.endDate) {
+        const d = new Date(updatePayload.contract.endDate);
+        updatePayload.contract.endDate = isNaN(d.getTime()) ? null : d;
+      }
+    }
 
     // Handle status shorthand if provided ('active', 'deactive', 'inactive', 'restricted')
     if (status !== undefined) {

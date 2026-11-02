@@ -26,7 +26,11 @@ const storageSchema = new mongoose.Schema(
         storageCode: { type: String, required: true, unique: true },
         storageType: { type: String, required: true },
         selfOwned: { type: Boolean, default: true },
-        cubicMeter: { type: Number, required: true },
+        cubicMeter: { 
+            type: Number, 
+            required: [true, 'Cubic meter is required'], 
+            min: [0.01, 'Cubic meter must be strictly greater than 0'] 
+        },
         warehouse: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Warehouse',

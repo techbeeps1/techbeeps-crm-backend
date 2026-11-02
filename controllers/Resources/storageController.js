@@ -5,6 +5,8 @@ const EmailTemplate = require('../../models/reporting');
 const financial = require('../../models/documentTemplateModel');
 const AppSettings = require('../../models/appSettingModel');
 const { renderEmailTemplate } = require('../../utils/emailTemplateUtil');
+const { validateWarehouseCapacity, calculateWarehouseAllocation } = require('../../utils/storageCapacityEngine');
+const { findPendingStorageBillings, processRecurringStorageBilling } = require('../../utils/storageBillingScheduler');
 
 const nodemailer = require('nodemailer');
 
@@ -12,10 +14,41 @@ const puppeteer = require("puppeteer-core");
 const chromium = require("@sparticuz/chromium");
 exports.createStorage = async (req, res) => {
     try {
-        const storage = new Storage(req.body);
+        const cubicMeter = Number(req.body.cubicMeter);
+        if (isNaN(cubicMeter) || cubicMeter <= 0) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_STORAGE_VOLUME',
+                message: 'Storage volume (cubicMeter) must be strictly greater than 0 m³.',
+            });
+        }
+
+        if (req.body.warehouse) {
+            const capCheck = await validateWarehouseCapacity(req.body.warehouse, cubicMeter);
+            if (!capCheck.valid) {
+                return res.status(422).json({
+                    success: false,
+                    code: capCheck.code || 'WAREHOUSE_CAPACITY_EXCEEDED',
+                    message: capCheck.message,
+                    details: capCheck.details,
+                });
+            }
+        }
+
+        const storage = new Storage({
+            ...req.body,
+            cubicMeter,
+        });
         await storage.save();
         res.status(201).json(storage);
     } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                code: 'STORAGE_CODE_EXISTS',
+                message: 'A storage unit with this code already exists.',
+            });
+        }
         res.status(500).json({
             success: false,
             message: error.message,
@@ -128,6 +161,50 @@ exports.emptyStorage = async (req, res) => {
 exports.updateStorage = async (req, res) => {
     try {
         const { id } = req.params;
+        const existing = await Storage.findById(id);
+        if (!existing) {
+            return res.status(404).json({
+                success: false,
+                message: 'Storage not found',
+            });
+        }
+
+        // Validate volume and warehouse capacity if changing
+        if (req.body.cubicMeter !== undefined || req.body.warehouse !== undefined) {
+            const targetVolume = req.body.cubicMeter !== undefined ? Number(req.body.cubicMeter) : existing.cubicMeter;
+            const targetWarehouse = req.body.warehouse !== undefined ? req.body.warehouse : existing.warehouse;
+
+            if (isNaN(targetVolume) || targetVolume <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'INVALID_STORAGE_VOLUME',
+                    message: 'Storage volume (cubicMeter) must be strictly greater than 0 m³.',
+                });
+            }
+
+            if (targetWarehouse) {
+                const capCheck = await validateWarehouseCapacity(targetWarehouse, targetVolume, id);
+                if (!capCheck.valid) {
+                    return res.status(422).json({
+                        success: false,
+                        code: capCheck.code || 'WAREHOUSE_CAPACITY_EXCEEDED',
+                        message: capCheck.message,
+                        details: capCheck.details,
+                    });
+                }
+            }
+        }
+
+        // Prevent assigning another customer if already occupied
+        if (req.body.customer && existing.customer && String(req.body.customer) !== String(existing.customer)) {
+            if ((existing.storageStatus === 'In use' || existing.storageStatus === 'occupied') && req.body.storageStatus !== 'free') {
+                return res.status(409).json({
+                    success: false,
+                    code: 'STORAGE_ALREADY_OCCUPIED',
+                    message: 'Storage unit is currently occupied by another customer. Please empty or release the storage unit first.',
+                });
+            }
+        }
 
         const filteredBody = Object.fromEntries(
             Object.entries(req.body).filter(([_, value]) => {
@@ -648,3 +725,71 @@ async function generatePdf(htmlContent, data) {
     }
   }
 }
+
+// --- EXEC-34: Recurring Storage Invoicing & Billing Scheduler ---
+
+exports.getPendingRecurringBilling = async (req, res) => {
+    try {
+        const { asOfDate, storageId } = req.query;
+        const targetDate = asOfDate ? new Date(asOfDate) : new Date();
+        const pendingItems = await findPendingStorageBillings(targetDate, storageId);
+
+        const totalPendingAmount = pendingItems.reduce((acc, it) => acc + (it.financials?.total || 0), 0);
+
+        res.status(200).json({
+            success: true,
+            asOfDate: targetDate.toISOString(),
+            pendingCount: pendingItems.length,
+            totalPendingAmount: Math.round(totalPendingAmount * 100) / 100,
+            pendingItems
+        });
+    } catch (error) {
+        console.error('Error fetching pending storage billing:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch pending recurring storage billings',
+            error: error.message
+        });
+    }
+};
+
+exports.processRecurringBilling = async (req, res) => {
+    try {
+        const { asOfDate, storageIds } = req.body;
+        const targetDate = asOfDate ? new Date(asOfDate) : new Date();
+
+        const result = await processRecurringStorageBilling(targetDate, storageIds);
+        res.status(200).json(result);
+    } catch (error) {
+        console.error('Error processing recurring storage billing:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to process recurring storage billing',
+            error: error.message
+        });
+    }
+};
+
+exports.checkCapacityAvailability = async (req, res) => {
+    try {
+        const { warehouseId, cubicMeter, excludeStorageId } = req.query;
+        const vol = Number(cubicMeter);
+
+        if (isNaN(vol) || vol <= 0) {
+            return res.status(400).json({
+                valid: false,
+                code: 'INVALID_STORAGE_VOLUME',
+                message: 'Cubic meter must be a positive number greater than 0.'
+            });
+        }
+
+        const result = await validateWarehouseCapacity(warehouseId, vol, excludeStorageId);
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json({
+            valid: false,
+            message: 'Error verifying warehouse capacity',
+            error: error.message
+        });
+    }
+};

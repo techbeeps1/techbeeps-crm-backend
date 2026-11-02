@@ -42,5 +42,44 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-module.exports = authMiddleware;
+const optionalAuthMiddleware = async (req, res, next) => {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) {
+    return next();
+  }
+  try {
+    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const decoded = jwt.verify(token, jwtSecret);
+    const innerUser = (decoded && typeof decoded.user === 'object' && decoded.user !== null) ? decoded.user : {};
+    const targetUserId = innerUser.id || innerUser.userId || innerUser._id || decoded.id || decoded.userId || decoded._id;
 
+    if (targetUserId) {
+      try {
+        const userDoc = await User.findById(targetUserId).select('isActive isRestricted');
+        if (userDoc && (userDoc.isActive === false || userDoc.isRestricted === true)) {
+          return res.status(403).json({ msg: 'This account has been deactivated or restricted by administrator.' });
+        }
+      } catch (err) {
+        // Gracefully ignore transient DB lookup errors
+      }
+    }
+
+    req.user = {
+      ...decoded,
+      ...innerUser,
+      id: targetUserId,
+      userId: targetUserId,
+      _id: targetUserId,
+      role: innerUser.role || decoded.role || 'Staff',
+      access: innerUser.access || decoded.access || [],
+      username: innerUser.username || decoded.username || '',
+    };
+    next();
+  } catch (err) {
+    next();
+  }
+};
+
+authMiddleware.optionalAuthMiddleware = optionalAuthMiddleware;
+module.exports = authMiddleware;
+module.exports.optionalAuthMiddleware = optionalAuthMiddleware;

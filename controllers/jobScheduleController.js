@@ -2,17 +2,39 @@ const JobSchedule = require("../models/jobSchedule");
 const { ObjectId } = require("mongodb");
 const Customer = require("../models/customer");
 const notes = require("../models/job/notes");
-//const FinancialProcess = require("../models/job/financialProcess");
 const Package = require('../models/PackageModel');
 const ValuationRooms = require("../models/Valuation/valuationRoomDetail");
 const FurnitureType = require("../models/Valuation/furnitureTypeModel");
 const Invoice = require("../models/invoice");
 const Finance = require("../models/finance");
 const ServiceType = require("../models/Valuation/serviceTypeModel");
+const {
+  CANONICAL_STATUSES,
+  normalizeStatus,
+  validateTransition,
+  isWorkerAssignedToJob,
+} = require("../utils/jobStateMachine");
 
+/**
+ * Create Job Schedule (Initial Intake)
+ * POST /api/jobSchedule
+ */
 exports.jobSchedule = async (req, res) => {
   try {
-    const { date, customer, package, load, unload, knownAddress, services, priceAgree, hasElevator, unloadElevator } = req.body;
+    const {
+      date,
+      customer,
+      package,
+      load,
+      unload,
+      knownAddress,
+      services,
+      priceAgree,
+      hasElevator,
+      unloadElevator,
+      status,
+    } = req.body;
+
     if (!customer) {
       return res.status(400).json({ message: 'Customer ID is required to schedule a job' });
     }
@@ -24,23 +46,57 @@ exports.jobSchedule = async (req, res) => {
     if (!packageExists) {
       return res.status(404).json({ message: 'Package not found' });
     }
-    const newJobSchedule = new JobSchedule({ date, customer, package, load, unload, knownAddress, services, priceAgree, hasElevator, unloadElevator });
+
+    const initialStatus = normalizeStatus(status) || 'PENDING';
+    const initialHistory = [
+      {
+        fromStatus: 'INITIAL',
+        toStatus: initialStatus,
+        changedBy: req.user?.userId || req.user?._id || null,
+        changedByName: req.user?.username || 'System Intake',
+        userRole: req.user?.role || 'Staff',
+        changedAt: new Date(),
+        reason: 'Initial job creation',
+      },
+    ];
+
+    const newJobSchedule = new JobSchedule({
+      date,
+      customer,
+      package,
+      load,
+      unload,
+      knownAddress,
+      services,
+      priceAgree,
+      hasElevator,
+      unloadElevator,
+      status: initialStatus,
+      statusHistory: initialHistory,
+      executionDetails: {},
+    });
+
     const savedJobSchedule = await newJobSchedule.save();
-    res.status(201).json(newJobSchedule);
+    res.status(201).json(savedJobSchedule);
   } catch (error) {
     res.status(500).json({ message: 'Failed to create job schedule', error: error.message });
   }
 };
 
+/**
+ * Update Job Schedule with State Machine Transition Controls
+ * PUT /api/job-schedule/:id
+ */
 exports.updateJobSchedule = async (req, res) => {
   try {
-    const { id } = req.params; // Get the job schedule ID from the URL parameter
+    const { id } = req.params;
     const { date, customer, package, load, unload, knownAddress, status, offer, invoice } = req.body;
 
     const jobSchedule = await JobSchedule.findById(id);
     if (!jobSchedule) {
       return res.status(404).json({ message: 'Job schedule not found' });
     }
+
     if (customer) {
       const customerExists = await Customer.findById(customer);
       if (!customerExists) {
@@ -49,26 +105,39 @@ exports.updateJobSchedule = async (req, res) => {
       jobSchedule.customer = customer;
     }
 
+    // EXEC-32: Server-enforced State Machine Validation
     if (status) {
-      const CANONICAL_STATUSES = ['DRAFT', 'PROCESSING', 'EXECUTION', 'COMPLETED', 'CANCELLED'];
-      const STATUS_MAP = {
-        'first contact': 'PROCESSING',
-        'processing': 'PROCESSING',
-        'in progress': 'EXECUTION',
-        'execution': 'EXECUTION',
-        'completed': 'COMPLETED',
-        'cancelled': 'CANCELLED',
-        'draft': 'DRAFT',
-        'pending': 'PROCESSING',
-      };
-      const normalizedStatus = String(status).toLowerCase().trim();
-      const canonicalStatus = STATUS_MAP[normalizedStatus] || String(status).toUpperCase().trim();
-      if (!CANONICAL_STATUSES.includes(canonicalStatus)) {
-        return res.status(400).json({
-          message: `Invalid workflow status: '${status}'. Allowed canonical states: ${CANONICAL_STATUSES.join(', ')}`
+      const transitionCheck = await validateTransition({
+        currentStatus: jobSchedule.status,
+        targetStatus: status,
+        jobDoc: jobSchedule,
+        user: req.user,
+        reason: req.body.reason || req.body.statusReason || '',
+      });
+
+      if (!transitionCheck.allowed) {
+        return res.status(transitionCheck.statusCode || 422).json({
+          success: false,
+          code: transitionCheck.code,
+          message: transitionCheck.message,
         });
       }
-      jobSchedule.status = canonicalStatus;
+
+      if (!transitionCheck.isNoop) {
+        if (!Array.isArray(jobSchedule.statusHistory)) {
+          jobSchedule.statusHistory = [];
+        }
+        jobSchedule.statusHistory.push({
+          fromStatus: transitionCheck.normCurrent,
+          toStatus: transitionCheck.normTarget,
+          changedBy: req.user?.userId || req.user?._id || null,
+          changedByName: req.user?.username || 'Authorized User',
+          userRole: req.user?.role || 'Staff',
+          changedAt: new Date(),
+          reason: req.body.reason || req.body.statusReason || '',
+        });
+        jobSchedule.status = transitionCheck.normTarget;
+      }
     }
 
     jobSchedule.date = date || jobSchedule.date;
@@ -76,6 +145,7 @@ exports.updateJobSchedule = async (req, res) => {
     jobSchedule.load = load || jobSchedule.load;
     jobSchedule.unload = unload || jobSchedule.unload;
     jobSchedule.knownAddress = knownAddress || jobSchedule.knownAddress;
+
     if (req.body.services !== undefined) {
       jobSchedule.services = req.body.services;
     }
@@ -89,15 +159,227 @@ exports.updateJobSchedule = async (req, res) => {
         jobSchedule.invoice.push(invoice);
       }
     }
+
     const updatedJobSchedule = await jobSchedule.save();
     res.status(200).json({ msg: 'Job schedule updated successfully', updatedJobSchedule });
   } catch (error) {
-    console.error(error);
+    console.error('Error updating job schedule:', error);
     res.status(500).json({ message: 'Failed to update job schedule', error: error.message });
   }
 };
 
+/**
+ * Dedicated Status Transition Endpoint
+ * PUT /api/jobs/:id/status
+ */
+exports.transitionJobStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, reason } = req.body;
 
+    const jobSchedule = await JobSchedule.findById(id);
+    if (!jobSchedule) {
+      return res.status(404).json({ success: false, message: 'Job schedule not found' });
+    }
+
+    const transitionCheck = await validateTransition({
+      currentStatus: jobSchedule.status,
+      targetStatus: status,
+      jobDoc: jobSchedule,
+      user: req.user,
+      reason,
+    });
+
+    if (!transitionCheck.allowed) {
+      return res.status(transitionCheck.statusCode || 422).json({
+        success: false,
+        code: transitionCheck.code,
+        message: transitionCheck.message,
+      });
+    }
+
+    if (!transitionCheck.isNoop) {
+      if (!Array.isArray(jobSchedule.statusHistory)) {
+        jobSchedule.statusHistory = [];
+      }
+      jobSchedule.statusHistory.push({
+        fromStatus: transitionCheck.normCurrent,
+        toStatus: transitionCheck.normTarget,
+        changedBy: req.user?.userId || req.user?._id || null,
+        changedByName: req.user?.username || 'Authorized User',
+        userRole: req.user?.role || 'Staff',
+        changedAt: new Date(),
+        reason: reason || '',
+      });
+      jobSchedule.status = transitionCheck.normTarget;
+      await jobSchedule.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Job #${jobSchedule.index || ''} status transitioned to ${transitionCheck.normTarget}`,
+      status: jobSchedule.status,
+      statusHistory: jobSchedule.statusHistory,
+    });
+  } catch (error) {
+    console.error('Error transitioning job status:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Update Field Execution Details (Worker & Foreman Journey)
+ * PUT /api/jobs/:id/execution
+ */
+exports.updateExecutionDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const jobSchedule = await JobSchedule.findById(id);
+    if (!jobSchedule) {
+      return res.status(404).json({ success: false, message: 'Job schedule not found' });
+    }
+
+    // Role & Assignment Access Control
+    const isAuthorized = await isWorkerAssignedToJob(id, req.user?.userId, req.user?.role);
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        code: 'ACCESS_DENIED',
+        message: 'Access denied: You are not assigned to this job.',
+      });
+    }
+
+    const {
+      startedAt,
+      completedAt,
+      startKilometres,
+      endKilometres,
+      operationalNotes,
+      actualMovers,
+      billableHours,
+      payrollHours,
+      materialsUsed,
+      damageReports,
+      customerSignature,
+      colliCount,
+      colliNotes,
+      autoComplete,
+    } = req.body;
+
+    if (!jobSchedule.executionDetails) {
+      jobSchedule.executionDetails = {};
+    }
+
+    const exec = jobSchedule.executionDetails;
+    if (startedAt !== undefined) exec.startedAt = startedAt;
+    if (completedAt !== undefined) exec.completedAt = completedAt;
+    if (startKilometres !== undefined) exec.startKilometres = Number(startKilometres) || 0;
+    if (endKilometres !== undefined) exec.endKilometres = Number(endKilometres) || 0;
+    if (exec.endKilometres >= exec.startKilometres) {
+      exec.totalKilometres = exec.endKilometres - exec.startKilometres;
+    }
+    if (operationalNotes !== undefined) exec.operationalNotes = operationalNotes;
+    if (actualMovers !== undefined) exec.actualMovers = Number(actualMovers) || 0;
+    if (billableHours !== undefined) exec.billableHours = Number(billableHours) || 0;
+    if (payrollHours !== undefined) exec.payrollHours = Number(payrollHours) || 0;
+    if (colliCount !== undefined) exec.colliCount = Number(colliCount) || 0;
+    if (colliNotes !== undefined) exec.colliNotes = colliNotes;
+
+    if (Array.isArray(materialsUsed)) {
+      exec.materialsUsed = materialsUsed.map((m) => ({
+        materialName: m.materialName || '',
+        quantity: Number(m.quantity) || 0,
+        unitPrice: Number(m.unitPrice) || 0,
+        totalPrice: (Number(m.quantity) || 0) * (Number(m.unitPrice) || 0),
+      }));
+    }
+
+    if (Array.isArray(damageReports)) {
+      exec.damageReports = damageReports;
+    }
+
+    if (customerSignature) {
+      exec.customerSignature = {
+        signerName: customerSignature.signerName || '',
+        signatureData: customerSignature.signatureData || '',
+        signedAt: customerSignature.signedAt || new Date(),
+        signerRole: customerSignature.signerRole || 'Customer',
+      };
+    }
+
+    // Set foreman info
+    if (!exec.foremanId) {
+      exec.foremanId = req.user?.userId || req.user?._id || null;
+      exec.foremanName = req.user?.username || 'Foreman';
+    }
+
+    // Auto-transition to COMPLETED if customer signature provided & complete requested
+    if ((autoComplete || customerSignature) && jobSchedule.status === 'EXECUTION') {
+      exec.completedAt = exec.completedAt || new Date();
+      jobSchedule.status = 'COMPLETED';
+      if (!Array.isArray(jobSchedule.statusHistory)) jobSchedule.statusHistory = [];
+      jobSchedule.statusHistory.push({
+        fromStatus: 'EXECUTION',
+        toStatus: 'COMPLETED',
+        changedBy: req.user?.userId || req.user?._id || null,
+        changedByName: req.user?.username || 'Foreman',
+        userRole: req.user?.role || 'Staff',
+        changedAt: new Date(),
+        reason: 'Move finished, signed and closed via foreman execution journey',
+      });
+    }
+
+    jobSchedule.markModified('executionDetails');
+    await jobSchedule.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Execution details saved successfully',
+      executionDetails: jobSchedule.executionDetails,
+      status: jobSchedule.status,
+    });
+  } catch (error) {
+    console.error('Error updating execution details:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Get Execution Details
+ * GET /api/jobs/:id/execution
+ */
+exports.getExecutionDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const isAuthorized = await isWorkerAssignedToJob(id, req.user?.userId, req.user?.role);
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        code: 'ACCESS_DENIED',
+        message: 'Access denied: You are not assigned to this job.',
+      });
+    }
+
+    const jobSchedule = await JobSchedule.findById(id).select('executionDetails statusHistory status index load unload date');
+    if (!jobSchedule) {
+      return res.status(404).json({ success: false, message: 'Job schedule not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      executionDetails: jobSchedule.executionDetails,
+      status: jobSchedule.status,
+      statusHistory: jobSchedule.statusHistory,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * List Jobs
+ * GET /api/jobList
+ */
 exports.jobList = async (req, res) => {
   try {
     const customerId = req.query.customer;
@@ -122,11 +404,11 @@ exports.jobList = async (req, res) => {
       }
     }
     const jobList = await JobSchedule.find(filter)
-      .select('customer date status load unload index package relocation services') // Preserve complete address snapshots & metadata
-      .populate('customer', 'firstName lastName email contact mobile') // Include contact info
+      .select('customer date status load unload index package relocation services executionDetails statusHistory')
+      .populate('customer', 'firstName lastName email contact mobile')
       .populate('package', 'name priceAgree')
       .sort({ createdAt: -1 })
-      .lean(); // Converts documents to plain JS objects
+      .lean();
 
     res.json({ jobList });
   } catch (err) {
@@ -134,7 +416,6 @@ exports.jobList = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 exports.deleteJobSchedule = async (req, res) => {
   try {
@@ -150,7 +431,6 @@ exports.deleteJobSchedule = async (req, res) => {
     res.status(500).json({ message: 'Failed to delete job schedule', error: error.message });
   }
 };
-
 
 exports.searchedJobs = async (req, res) => {
   try {
@@ -251,7 +531,6 @@ exports.jobNotes = async (req, res) => {
   }
 };
 
-
 exports.notesListByJobId = async (req, res) => {
   try {
     if (req) {
@@ -286,41 +565,26 @@ exports.updateJobNotes = async (req, res) => {
   }
 };
 
-// exports.updateFinancialProcess = async (req, res) => {
-//   try {
-//     const checkId = await FinancialProcess.findById({ _id: req.body._id });
-//     if (checkId) {
-//       const editdata = await FinancialProcess.findByIdAndUpdate(req.body._id, req.body, {
-//         new: true,
-//       });
-//       if (editdata) {
-//         res.status(200).send({
-//           msg: "edited data Successfully",
-//           data: editdata,
-//         });
-//       }
-//     }
-//   } catch (err) {
-//     console.log(err);
-//   }
-// };
-
-// exports.financialProcessListByJobId = async (req, res) => {
-//   try {
-//     const jobId = new ObjectId(req.query.jobId);
-//     const financialProcessListByJobId = await FinancialProcess.find({ jobId: jobId });
-//     res.json({
-//       financialProcessListByJobId: financialProcessListByJobId,
-//     });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// };
-
+/**
+ * Get Job Schedule By ID (with Worker Access Control)
+ * GET /api/jobs/:id
+ */
 exports.getJobScheduleById = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // EXEC-32: Assigned Worker Access Control
+    if (req.user) {
+      const isAuthorized = await isWorkerAssignedToJob(id, req.user?.userId, req.user?.role);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Access denied: You are not assigned to this job.',
+        });
+      }
+    }
+
     const jobSchedule = await JobSchedule.findById(id).populate({
       path: 'customer',
       populate: {
@@ -397,4 +661,3 @@ exports.getJobScheduleById = async (req, res) => {
     res.status(500).json({ message: 'Failed to retrieve job schedule', error: error.message });
   }
 };
-

@@ -1,4 +1,3 @@
-
 const mongoose = require('mongoose');
 
 const addressSchema = new mongoose.Schema({
@@ -54,9 +53,8 @@ const relocationSchema = new mongoose.Schema({
   _id: false
 });
 
-
 const jodScheduleSchema = new mongoose.Schema({
-  status: { type: String, default: "Pending" },
+  status: { type: String, default: "PENDING" },
   index: { type: String },
   date: { type: Date, default: Date.now },
   load: { type: addressSchema },
@@ -75,6 +73,61 @@ const jodScheduleSchema = new mongoose.Schema({
     }
   ],
   relocation: { type: relocationSchema },
+
+  // EXEC-32: Canonical State Machine Audit History
+  statusHistory: [
+    {
+      fromStatus: { type: String },
+      toStatus: { type: String },
+      changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      changedByName: { type: String },
+      userRole: { type: String },
+      changedAt: { type: Date, default: Date.now },
+      reason: { type: String },
+    }
+  ],
+
+  // EXEC-32: Worker & Foreman Field Execution Journey
+  executionDetails: {
+    startedAt: { type: Date },
+    completedAt: { type: Date },
+    startKilometres: { type: Number, default: 0 },
+    endKilometres: { type: Number, default: 0 },
+    totalKilometres: { type: Number, default: 0 },
+    foremanId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    foremanName: { type: String },
+    operationalNotes: { type: String, default: '' },
+    actualMovers: { type: Number, default: 0 },
+    billableHours: { type: Number, default: 0 },
+    payrollHours: { type: Number, default: 0 },
+    materialsUsed: [
+      {
+        materialName: { type: String },
+        quantity: { type: Number, default: 0 },
+        unitPrice: { type: Number, default: 0 },
+        totalPrice: { type: Number, default: 0 },
+      }
+    ],
+    damageReports: [
+      {
+        room: { type: String },
+        item: { type: String },
+        description: { type: String },
+        severity: { type: String, enum: ['Minor', 'Moderate', 'Severe'], default: 'Minor' },
+        reportedAt: { type: Date, default: Date.now },
+        reportedBy: { type: String },
+        photos: [{ type: String }],
+      }
+    ],
+    customerSignature: {
+      signerName: { type: String },
+      signatureData: { type: String }, // Base64 data URL
+      signedAt: { type: Date },
+      signerRole: { type: String, default: 'Customer' },
+    },
+    colliCount: { type: Number, default: 0 },
+    colliNotes: { type: String, default: '' },
+  },
 }, { timestamps: true });
 
 jodScheduleSchema.pre('save', async function () {
@@ -96,4 +149,3 @@ jodScheduleSchema.pre('save', async function () {
 });
 
 module.exports = mongoose.model("jobSchedule", jodScheduleSchema);
-

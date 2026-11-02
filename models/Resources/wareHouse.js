@@ -32,6 +32,11 @@ const warehouseSchema = new mongoose.Schema(
       type: String,
       default: "enable", // Default condition
     },
+    totalCapacityM3: {
+      type: Number,
+      default: 0,
+      min: [0, "Total capacity must be non-negative"],
+    },
   },
   {
     timestamps: true, // Add createdAt and updatedAt timestamps

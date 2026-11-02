@@ -14,13 +14,15 @@ router.delete('/job-schedule/:id', roleMiddleware('Admin'), jobScheduleControlle
 router.put('/job-schedule/:id', roleMiddleware(['Admin', 'Staff', 'Agent']), jobScheduleController.updateJobSchedule);
 router.get('/jobs/:id', jobScheduleController.getJobScheduleById);
 
+// EXEC-32: State Machine Transition & Worker Execution Journeys
+router.put('/jobs/:id/status', jobScheduleController.transitionJobStatus);
+router.put('/jobs/:id/execution', jobScheduleController.updateExecutionDetails);
+router.get('/jobs/:id/execution', jobScheduleController.getExecutionDetails);
+
 router.get('/jobListByCustomerId', jobScheduleController.jobListByCustomerId);
 router.get('/searchedJobs', jobScheduleController.searchedJobs); 
 router.post('/jobNotes', roleMiddleware(['Admin', 'Staff', 'Agent']), jobScheduleController.jobNotes);
 router.get('/notesListByJobId', jobScheduleController.notesListByJobId);
 router.put('/updateJobNotes/:notesId', roleMiddleware(['Admin', 'Staff', 'Agent']), jobScheduleController.updateJobNotes);
-//router.get('/financialProcessListByJobId', jobScheduleController.financialProcessListByJobId);
-//router.put('/updateFinancialProcess/:id', jobScheduleController.updateFinancialProcess);
-//router.post('/jobs/sendQuoteToCustomer', sendQuoteToCustomerController.sendQuoteToCustomer);
 
 module.exports = router;

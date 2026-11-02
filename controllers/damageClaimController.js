@@ -6,7 +6,7 @@ const User = require('../models/user');
 const getUserContext = (req) => {
   const user = req.user || {};
   const role = user.role || 'Staff';
-  const userId = user._id || user.id || null;
+  const userId = user._id || user.id || user.userId || null;
   const username = user.username || user.name || 'Admin / User';
   const isAdmin = role === 'Admin';
   return { role, userId, username, isAdmin };
@@ -229,22 +229,41 @@ exports.createDamageClaim = async (req, res) => {
 
     // Format item entries & calculate total claimed
     let calculatedTotalClaimed = 0;
-    const formattedItems = items.map((it) => {
-      const itClaimAmt = parseFloat(it.claimedAmount) || 0;
+    const formattedItems = [];
+    for (const it of items) {
+      const itClaimAmt = parseFloat(it.claimedAmount);
+      if (isNaN(itClaimAmt) || itClaimAmt < 0) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_CLAIMED_AMOUNT',
+          message: `Claimed amount for item '${it.itemName || 'Item'}' must be a non-negative number.`,
+        });
+      }
       calculatedTotalClaimed += itClaimAmt;
-      return {
+      formattedItems.push({
         itemName: (it.itemName || '').trim(),
         itemCategory: it.itemCategory || 'Furniture',
         damageType: it.damageType || 'Scratch / Dent',
         quantity: parseInt(it.quantity, 10) || 1,
         estimatedOriginalValue: parseFloat(it.estimatedOriginalValue) || 0,
-        claimedAmount: itClaimAmt,
-        approvedAmount: parseFloat(it.approvedAmount) || 0,
+        claimedAmount: Number(itClaimAmt.toFixed(2)),
+        approvedAmount: 0,
         evidencePhotos: Array.isArray(it.evidencePhotos) ? it.evidencePhotos : [],
         repairQuoteUrl: (it.repairQuoteUrl || '').trim(),
         notes: (it.notes || '').trim(),
-      };
-    });
+      });
+    }
+
+    if (calculatedTotalClaimed <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_TOTAL_CLAIMED',
+        message: 'Total claimed amount must be greater than €0.00.',
+      });
+    }
+
+    const dedAmt = parseFloat(deductibleAmount);
+    const resolvedDeductible = !isNaN(dedAmt) && dedAmt >= 0 ? Number(dedAmt.toFixed(2)) : 0;
 
     // Lookup Job index if jobId provided
     let resolvedJobIndex = '';
@@ -270,7 +289,7 @@ exports.createDamageClaim = async (req, res) => {
       items: formattedItems,
       insuranceType: insuranceType || 'Standard Transit Liability',
       policyNumber: (policyNumber || '').trim(),
-      deductibleAmount: parseFloat(deductibleAmount) || 0,
+      deductibleAmount: resolvedDeductible,
       totalClaimedAmount: Number(calculatedTotalClaimed.toFixed(2)),
       totalApprovedAmount: 0,
       deductibleApplied: 0,
@@ -367,26 +386,49 @@ exports.updateDamageClaim = async (req, res) => {
     if (items && Array.isArray(items) && items.length > 0) {
       let calcClaimed = 0;
       let calcApproved = 0;
+      const updatedItems = [];
 
-      claim.items = items.map((it) => {
-        const itClaimAmt = parseFloat(it.claimedAmount) || 0;
+      for (const it of items) {
+        const itClaimAmt = parseFloat(it.claimedAmount);
         const itAppAmt = parseFloat(it.approvedAmount) || 0;
+        if (isNaN(itClaimAmt) || itClaimAmt < 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_CLAIMED_AMOUNT',
+            message: `Claimed amount for item '${it.itemName || 'Item'}' must be a non-negative number.`,
+          });
+        }
+        if (itAppAmt < 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_ITEM_APPROVED_AMOUNT',
+            message: `Approved amount for item '${it.itemName || 'Item'}' cannot be negative.`,
+          });
+        }
+        if (itAppAmt > itClaimAmt) {
+          return res.status(422).json({
+            success: false,
+            code: 'ITEM_APPROVED_EXCEEDS_CLAIMED',
+            message: `Approved amount (€${itAppAmt.toFixed(2)}) for item '${it.itemName}' cannot exceed item claimed amount (€${itClaimAmt.toFixed(2)}).`,
+          });
+        }
         calcClaimed += itClaimAmt;
         calcApproved += itAppAmt;
-        return {
+        updatedItems.push({
           itemName: (it.itemName || '').trim(),
           itemCategory: it.itemCategory || 'Furniture',
           damageType: it.damageType || 'Scratch / Dent',
           quantity: parseInt(it.quantity, 10) || 1,
           estimatedOriginalValue: parseFloat(it.estimatedOriginalValue) || 0,
-          claimedAmount: itClaimAmt,
-          approvedAmount: itAppAmt,
+          claimedAmount: Number(itClaimAmt.toFixed(2)),
+          approvedAmount: Number(itAppAmt.toFixed(2)),
           evidencePhotos: Array.isArray(it.evidencePhotos) ? it.evidencePhotos : [],
           repairQuoteUrl: (it.repairQuoteUrl || '').trim(),
           notes: (it.notes || '').trim(),
-        };
-      });
+        });
+      }
 
+      claim.items = updatedItems;
       claim.totalClaimedAmount = Number(calcClaimed.toFixed(2));
       if (calcApproved > 0) {
         claim.totalApprovedAmount = Number(calcApproved.toFixed(2));
@@ -427,7 +469,7 @@ exports.updateDamageClaim = async (req, res) => {
 exports.updateClaimStatusAndSettlement = async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId, username } = getUserContext(req);
+    const { role, userId, username } = getUserContext(req);
 
     const claim = await DamageClaim.findById(id);
     if (!claim) {
@@ -450,54 +492,148 @@ exports.updateClaimStatusAndSettlement = async (req, res) => {
 
     const previousStatus = claim.status;
 
-    if (status) {
-      claim.status = status;
+    // 1. Role Authorization Gate: Only Admin, Manager, Claims Adjuster, HR may approve, settle, or reject
+    const PRIVILEGED_ADJUSTER_ROLES = ['Admin', 'Manager', 'Claims Adjuster', 'HR'];
+    const isAdjusterAuthorized = PRIVILEGED_ADJUSTER_ROLES.includes(role);
+
+    if (['Approved', 'Partially Approved', 'Settled', 'Rejected'].includes(status)) {
+      if (!isAdjusterAuthorized) {
+        return res.status(403).json({
+          success: false,
+          code: 'UNAUTHORIZED_CLAIM_ADJUSTMENT',
+          message: `Role '${role}' is not authorized to approve, settle, or reject damage claims. Only Admin or Manager may perform adjustments.`,
+        });
+      }
     }
 
-    claim.reviewedBy = userId || null;
-    claim.reviewedByName = username || 'Reviewer';
-    claim.reviewedAt = new Date();
-
-    if (reviewerComment !== undefined) {
-      claim.reviewerComment = reviewerComment.trim();
+    // 2. Reopening Closed/Settled Claims
+    if (['Settled', 'Closed'].includes(previousStatus) && status && !['Settled', 'Closed'].includes(status)) {
+      if (!['Admin', 'Manager'].includes(role)) {
+        return res.status(403).json({
+          success: false,
+          code: 'UNAUTHORIZED_REOPEN_CLAIM',
+          message: `Only Admin or Manager may reopen a ${previousStatus} claim. Your role: '${role}'.`,
+        });
+      }
+      const reopenReason = (reviewerComment || '').trim();
+      if (reopenReason.length < 5) {
+        return res.status(400).json({
+          success: false,
+          code: 'REOPEN_REASON_REQUIRED',
+          message: `An auditable reason of at least 5 characters is required to reopen a ${previousStatus} claim.`,
+        });
+      }
+      claim.settlementStatus = 'Unsettled';
     }
 
-    // Handle Item level approvals if supplied
+    // 3. Status Rejection Rules
+    if (status === 'Rejected') {
+      const reason = (rejectionReason || reviewerComment || '').trim();
+      if (reason.length < 5) {
+        return res.status(400).json({
+          success: false,
+          code: 'REJECTION_REASON_REQUIRED',
+          message: 'A documented rejection reason of at least 5 characters is required to reject a claim.',
+        });
+      }
+      claim.status = 'Rejected';
+      claim.rejectionReason = reason;
+      claim.totalApprovedAmount = 0;
+      claim.deductibleApplied = 0;
+      claim.netSettlementAmount = 0;
+      claim.settlementStatus = 'Unsettled';
+    }
+
+    // 4. Item-Level Approvals Check
     if (itemApprovedAmounts && typeof itemApprovedAmounts === 'object') {
       let sumApproved = 0;
-      claim.items.forEach((it) => {
-        if (itemApprovedAmounts[it._id]) {
-          it.approvedAmount = parseFloat(itemApprovedAmounts[it._id]) || 0;
+      for (const it of claim.items) {
+        if (itemApprovedAmounts[it._id] !== undefined) {
+          const itApp = Number(parseFloat(itemApprovedAmounts[it._id]).toFixed(2)) || 0;
+          if (itApp < 0) {
+            return res.status(400).json({
+              success: false,
+              code: 'INVALID_ITEM_APPROVED_AMOUNT',
+              message: `Approved amount for item '${it.itemName}' cannot be negative.`,
+            });
+          }
+          if (itApp > it.claimedAmount) {
+            return res.status(422).json({
+              success: false,
+              code: 'ITEM_APPROVED_EXCEEDS_CLAIMED',
+              message: `Approved amount (€${itApp.toFixed(2)}) for item '${it.itemName}' cannot exceed item claimed amount (€${it.claimedAmount.toFixed(2)}).`,
+            });
+          }
+          it.approvedAmount = itApp;
         }
-        sumApproved += it.approvedAmount || 0;
-      });
-      if (sumApproved > 0 && totalApprovedAmount === undefined) {
+        sumApproved += (it.approvedAmount || 0);
+      }
+      if (totalApprovedAmount === undefined && sumApproved > 0) {
         claim.totalApprovedAmount = Number(sumApproved.toFixed(2));
       }
     }
 
-    // Handle Financials if approving or settling
-    if (
-      status === 'Approved' ||
-      status === 'Partially Approved' ||
-      status === 'Settled'
-    ) {
+    // 5. Approved & Settled Financial Validations
+    if (['Approved', 'Partially Approved', 'Settled'].includes(status)) {
       if (totalApprovedAmount !== undefined) {
-        claim.totalApprovedAmount = parseFloat(totalApprovedAmount) || 0;
-      }
-      if (deductibleApplied !== undefined) {
-        claim.deductibleApplied = parseFloat(deductibleApplied) || 0;
+        const approvedNum = Number(parseFloat(totalApprovedAmount).toFixed(2));
+        if (isNaN(approvedNum) || approvedNum <= 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_APPROVED_AMOUNT',
+            message: 'Approved amount must be greater than €0.00 for approved or settled claims.',
+          });
+        }
+        if (approvedNum > claim.totalClaimedAmount) {
+          return res.status(422).json({
+            success: false,
+            code: 'APPROVED_EXCEEDS_CLAIMED',
+            message: `Approved amount (€${approvedNum.toFixed(2)}) cannot exceed total claimed amount (€${claim.totalClaimedAmount.toFixed(2)}).`,
+          });
+        }
+        claim.totalApprovedAmount = approvedNum;
       }
 
-      const net = Math.max(
-        0,
-        (claim.totalApprovedAmount || 0) - (claim.deductibleApplied || 0)
-      );
+      if (deductibleApplied !== undefined) {
+        const dedNum = Number(parseFloat(deductibleApplied).toFixed(2)) || 0;
+        if (dedNum < 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_DEDUCTIBLE',
+            message: 'Deductible applied cannot be negative.',
+          });
+        }
+        claim.deductibleApplied = dedNum;
+      } else if (!claim.deductibleApplied && claim.deductibleAmount > 0) {
+        claim.deductibleApplied = claim.deductibleAmount;
+      }
+
+      // Strict net settlement formula: max(0, approved - deductible)
+      const net = Math.max(0, (claim.totalApprovedAmount || 0) - (claim.deductibleApplied || 0));
       claim.netSettlementAmount = Number(net.toFixed(2));
+      claim.status = status;
+    } else if (status && status !== 'Rejected') {
+      claim.status = status;
     }
 
-    // Handle Settlement Execution
+    // 6. Settlement Execution Validation
     if (status === 'Settled') {
+      if (claim.netSettlementAmount > 0) {
+        if (!settlementType || settlementType === 'None') {
+          return res.status(400).json({
+            success: false,
+            code: 'SETTLEMENT_TYPE_REQUIRED',
+            message: 'A valid settlement method (e.g. Direct Bank Transfer, Invoice Credit) is required when disbursing a positive settlement amount.',
+          });
+        }
+        if (settlementType === 'Direct Bank Transfer' && (!paymentReference || paymentReference.trim().length < 3)) {
+          return res.status(400).json({
+            success: false,
+            code: 'PAYMENT_REFERENCE_REQUIRED',
+            message: 'A payment reference / transaction identifier is required for Direct Bank Transfer settlement.',
+          });
+        }
+      }
       claim.settlementStatus = 'Settled';
       claim.settlementType = settlementType || 'Direct Bank Transfer';
       claim.settlementDate = new Date();
@@ -511,10 +647,13 @@ exports.updateClaimStatusAndSettlement = async (req, res) => {
       if (releaseDocumentUrl) {
         claim.releaseDocumentUrl = releaseDocumentUrl.trim();
       }
-    } else if (status === 'Rejected') {
-      claim.rejectionReason = (rejectionReason || reviewerComment || '').trim();
-      claim.settlementStatus = 'Unsettled';
-      claim.netSettlementAmount = 0;
+    }
+
+    claim.reviewedBy = userId || null;
+    claim.reviewedByName = username || 'Reviewer';
+    claim.reviewedAt = new Date();
+    if (reviewerComment !== undefined) {
+      claim.reviewerComment = reviewerComment.trim();
     }
 
     // Record Status History entry

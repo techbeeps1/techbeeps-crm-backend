@@ -235,6 +235,16 @@ exports.getShiftsForApproval = async (req, res) => {
 // 2. APPROVE SINGLE OR BULK SHIFTS
 exports.approveShifts = async (req, res) => {
   try {
+    const role = (req.user?.role || '').trim().toLowerCase();
+    const isAuthorized = role === 'admin' || role === 'superadmin' || role === 'manager' || role === 'hr';
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        code: 'UNAUTHORIZED_TIMESHEET_ACTION',
+        message: 'Access denied. Only Admin, Manager, or HR can approve timesheet shifts.',
+      });
+    }
+
     const { shifts, notes } = req.body; // array of shifts to approve
     const approvedBy = req.user?.userId || req.user?._id || null;
 
@@ -290,7 +300,7 @@ exports.approveShifts = async (req, res) => {
         actualEndTime: actualEndTime ? new Date(actualEndTime) : scheduledEndTime,
         breakMinutes: Number(breakMinutes) || 0,
         approvedHours: Number(finalHours),
-        overtimeHours: Number(overtimeHours) || 0,
+        overtimeHours: Number(overtimeHours) || (Number(finalHours) > 8 ? Number((Number(finalHours) - 8).toFixed(2)) : 0),
         status: 'Approved',
         notes: itemNotes || notes || '',
         approvedBy,
@@ -321,11 +331,29 @@ exports.approveShifts = async (req, res) => {
 // 3. REJECT SHIFT
 exports.rejectShift = async (req, res) => {
   try {
+    const role = (req.user?.role || '').trim().toLowerCase();
+    const isAuthorized = role === 'admin' || role === 'superadmin' || role === 'manager' || role === 'hr';
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        code: 'UNAUTHORIZED_TIMESHEET_ACTION',
+        message: 'Access denied. Only Admin, Manager, or HR can reject timesheet shifts.',
+      });
+    }
+
     const { appointmentId, employabilityId, employeeId, rejectionReason, notes } = req.body;
     const approvedBy = req.user?.userId || req.user?._id || null;
 
     if (!appointmentId || !employabilityId) {
       return res.status(400).json({ success: false, message: 'Appointment and shift ID are required' });
+    }
+
+    if (!rejectionReason || typeof rejectionReason !== 'string' || rejectionReason.trim().length < 5) {
+      return res.status(400).json({
+        success: false,
+        code: 'REJECTION_REASON_REQUIRED',
+        message: 'A documented rejection reason of at least 5 characters is required.',
+      });
     }
 
     const doc = await WorkHour.findOneAndUpdate(
@@ -377,9 +405,20 @@ exports.adjustShiftHours = async (req, res) => {
     } = req.body;
 
     const approvedBy = req.user?.userId || req.user?._id || null;
+    const role = (req.user?.role || '').trim().toLowerCase();
+    const isAuthorized = role === 'admin' || role === 'superadmin' || role === 'manager' || role === 'hr';
 
     if (!appointmentId || !employabilityId) {
       return res.status(400).json({ success: false, message: 'Appointment and shift ID are required' });
+    }
+
+    const existing = await WorkHour.findOne({ appointmentId, employabilityId });
+    if (existing && existing.status === 'Approved' && !isAuthorized) {
+      return res.status(422).json({
+        success: false,
+        code: 'APPROVED_TIMESHEET_LOCKED',
+        message: 'Approved timesheet shift is locked against modification to preserve payroll integrity. Only Admin/Manager can adjust.',
+      });
     }
 
     const rawDuration = computeHours(actualStartTime, actualEndTime);
@@ -400,7 +439,7 @@ exports.adjustShiftHours = async (req, res) => {
       actualEndTime: actualEndTime ? new Date(actualEndTime) : null,
       breakMinutes: Number(breakMinutes) || 0,
       approvedHours: finalHours,
-      overtimeHours: Number(overtimeHours) || 0,
+      overtimeHours: Number(overtimeHours) || (Number(finalHours) > 8 ? Number((Number(finalHours) - 8).toFixed(2)) : 0),
       notes: notes || '',
       status,
       approvedBy: status === 'Approved' ? approvedBy : undefined,

@@ -76,17 +76,24 @@ const reconcileEmployeeLeaveBalance = async (employeeId, year) => {
     maternity: 0,
   };
 
+  let totalVacationPaidDays = 0;
   for (const req of approvedRequests) {
     const paid = typeof req.paidDays === 'number' ? req.paidDays : (req.totalDays || 0);
     const unpaid = typeof req.unpaidDays === 'number' ? req.unpaidDays : 0;
-    totalApprovedPaidDays += paid;
-    totalApprovedUnpaidDays += unpaid;
-
     const field = mapLeaveTypeToField(req.leaveType);
+
     breakdown[field] = (breakdown[field] || 0) + paid;
     if (unpaid > 0) {
       breakdown.unpaid = (breakdown.unpaid || 0) + unpaid;
     }
+
+    // STATUTORY SEPARATION: Only Annual/Vacation (and casual/emergency) consumes annual vacation quota!
+    // Sickness (Ziekmelding) does NOT consume annual vacation quota under Dutch labor law.
+    if (field === 'annual' || field === 'casual' || field === 'emergency') {
+      totalVacationPaidDays += paid;
+    }
+    totalApprovedPaidDays += paid;
+    totalApprovedUnpaidDays += unpaid;
   }
 
   let balance = await LeaveBalance.findOne({ employeeId, year: targetYear });
@@ -97,12 +104,12 @@ const reconcileEmployeeLeaveBalance = async (employeeId, year) => {
       employeeName: user?.username || 'Staff',
       year: targetYear,
       annualEntitlement: 12,
-      usedDays: totalApprovedPaidDays,
+      usedDays: totalVacationPaidDays,
       unpaidDays: totalApprovedUnpaidDays,
       usedBreakdown: breakdown,
     });
   } else {
-    balance.usedDays = totalApprovedPaidDays;
+    balance.usedDays = totalVacationPaidDays;
     balance.unpaidDays = totalApprovedUnpaidDays;
     balance.usedBreakdown = breakdown;
   }
@@ -285,25 +292,44 @@ exports.createLeaveRequest = async (req, res) => {
       await balance.save();
     }
 
-    // Automatic calculation of Paid vs Non-Paid (Unpaid) Days
-    const remainingPaid = Math.max(0, (balance.annualEntitlement || 12) - (balance.usedDays || 0));
+    // Automatic calculation of Paid vs Non-Paid (Unpaid) Days with statutory sickness separation
     let paidDays = 0;
     let unpaidDays = 0;
 
-    if (leaveType === 'Unpaid Leave') {
+    if (leaveType === 'Sick Leave') {
+      // Dutch statutory law: Sickness is independent of annual vacation quota
+      paidDays = calculatedDays;
+      unpaidDays = 0;
+    } else if (leaveType === 'Unpaid Leave') {
       paidDays = 0;
       unpaidDays = calculatedDays;
+    } else if (leaveType === 'Annual / Vacation') {
+      const remainingVacation = Math.max(0, (balance.annualEntitlement || 12) - (balance.usedDays || 0));
+      if (!isAdmin && calculatedDays > remainingVacation) {
+        return res.status(422).json({
+          success: false,
+          code: 'INSUFFICIENT_LEAVE_BALANCE',
+          error: `Insufficient annual vacation leave balance. Available: ${remainingVacation} days, Requested: ${calculatedDays} days.`,
+          remainingVacation,
+          requestedDays: calculatedDays,
+        });
+      }
+      if (remainingVacation >= calculatedDays) {
+        paidDays = calculatedDays;
+        unpaidDays = 0;
+      } else {
+        // Admin advance or splitting
+        paidDays = remainingVacation;
+        unpaidDays = calculatedDays - remainingVacation;
+      }
     } else {
+      const remainingPaid = Math.max(0, (balance.annualEntitlement || 12) - (balance.usedDays || 0));
       if (remainingPaid >= calculatedDays) {
         paidDays = calculatedDays;
         unpaidDays = 0;
-      } else if (remainingPaid > 0) {
+      } else {
         paidDays = remainingPaid;
         unpaidDays = calculatedDays - remainingPaid;
-      } else {
-        // Paid quota exhausted: automatically apply as Non-Paid / Unpaid leave
-        paidDays = 0;
-        unpaidDays = calculatedDays;
       }
     }
 

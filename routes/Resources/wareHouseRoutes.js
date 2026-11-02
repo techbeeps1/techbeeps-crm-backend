@@ -6,6 +6,7 @@ const warehouseController = require("../../controllers/Resources/wareHouseContro
 router.post("/warehouses", warehouseController.createWarehouse); // Create
 router.get("/warehouses", warehouseController.getAllWarehouses); // Read all
 router.get("/warehouses/:id", warehouseController.getWarehouseById); // Read one
+router.get("/warehouses/:id/capacity", warehouseController.getWarehouseCapacityStatus); // Capacity status
 router.post("/warehouses/:id", warehouseController.updateWarehouse); // Update
 router.delete("/warehouses/:id", warehouseController.deleteWarehouse); // Delete
 
