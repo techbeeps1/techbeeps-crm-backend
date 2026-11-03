@@ -1,3 +1,5 @@
+const dns = require('dns');
+try { dns.setServers(['8.8.8.8', '8.8.4.4']); } catch (_) {}
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require("express");
@@ -244,6 +246,55 @@ server.use("/api", authMiddleware, storageRoutes);
 
 //server.use("/api", staffRoutes);
 server.use('/Communication', authMiddleware, newsItemsRoutes);
+
+// EXEC-38: Management Dashboard KPI Definitions Endpoint
+const dashboardController = require("./controllers/dashboardController");
+server.get("/api/dashboard/kpis", authMiddleware, dashboardController.getDashboardKpis);
+
+// EXEC-37: System Historical Data Inventory & Migration Rehearsal Endpoint
+const { runMigrationDryRun } = require('./scripts/migrationDryRun');
+server.get('/api/system/migration-audit', authMiddleware, async (req, res) => {
+  try {
+    const isLive = Boolean(req.query.mode === 'live' && req.user && req.user.role === 'Admin');
+    const report = await runMigrationDryRun({ isLive });
+    return res.status(200).json({
+      success: true,
+      data: report,
+    });
+  } catch (err) {
+    console.error('[migration-audit error]', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// EXEC-40: Final Release Acceptance Gate & Rollback Rehearsal Endpoint
+const { runRollbackRehearsal } = require('./scripts/releaseRollbackRehearsal');
+server.get('/api/system/rollback-audit', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'Admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'FORBIDDEN',
+        message: 'Only Admin can execute release rollback audits',
+      });
+    }
+    const isLive = Boolean(req.query.mode === 'live');
+    const report = await runRollbackRehearsal({ isLive });
+    return res.status(200).json({
+      success: true,
+      data: report,
+    });
+  } catch (err) {
+    console.error('[rollback-audit error]', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
 
 // EXEC-09: Centralized API 404 handler for unknown endpoints
 server.use((req, res, next) => {

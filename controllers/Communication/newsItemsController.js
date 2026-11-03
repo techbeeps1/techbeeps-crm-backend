@@ -1,110 +1,209 @@
 const NewsItems = require("../../models/Communication/newsItems");
 const { ObjectId } = require("mongodb");
 
+// Role authorization guard helper: Only Admin and Manager may author/modify announcements
+function isAuthorizedPublisher(user) {
+  const role = user?.role || '';
+  return role === 'Admin' || role === 'Manager';
+}
+
 exports.createNewsItems = async (req, res) => {
   try {
-    let newsItem = new NewsItems();
-    newsItem.title = req.body.title;
-    newsItem.body = req.body.body;
-    newsItem.publishAt = req.body.publishAt;
-
-    newsItem.save().then((result) => {
-      res.status(200).json({
-        msg: "data is successfully create!",
-        data: result,
+    if (!isAuthorizedPublisher(req.user)) {
+      return res.status(403).json({
+        success: false,
+        status: false,
+        error: "FORBIDDEN",
+        msg: "Only Admin or Manager can publish news announcements",
       });
+    }
+
+    const { title, body, publishAt } = req.body;
+
+    if (!title || typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 120) {
+      return res.status(400).json({
+        success: false,
+        status: false,
+        error: "VALIDATION_ERROR",
+        msg: "Title is required and must be between 3 and 120 characters",
+      });
+    }
+
+    if (!body || typeof body !== 'string' || body.trim().length < 5) {
+      return res.status(400).json({
+        success: false,
+        status: false,
+        error: "VALIDATION_ERROR",
+        msg: "Body is required and must be at least 5 characters",
+      });
+    }
+
+    const publisherName = req.user?.name ||
+      req.user?.fullName ||
+      `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() ||
+      'Management';
+
+    const newsItem = new NewsItems({
+      title: title.trim(),
+      body: body.trim(),
+      publishAt: publishAt ? new Date(publishAt) : new Date(),
+      employeeId: String(req.user?.id || req.user?._id || ''),
+      publisherName,
+    });
+
+    const result = await newsItem.save();
+    return res.status(200).json({
+      success: true,
+      status: true,
+      msg: "data is successfully create!",
+      data: result,
     });
   } catch (err) {
-    console.log(err);
+    console.error("[createNewsItems error]", err);
+    return res.status(500).json({
+      success: false,
+      status: false,
+      error: "SERVER_ERROR",
+      msg: err.message,
+    });
   }
 };
 
 exports.editNewsItem = async (req, res) => {
-  console.log("req body ==>",req.body)
   try {
-    const checkId = await NewsItems.findById({ _id: new ObjectId(req.body._id )});
-    if (checkId) {
-      const editedata = await NewsItems.findByIdAndUpdate(
-        req.body._id,
-        req.body,
-        { new: true }
-      );
-      console.log("edited data==>",editedata)
-      if (editedata) {
-        res.status(200).send({
-          msg: "edit data is Successfully",
-          data: editedata,
-        });
-      }
+    if (!isAuthorizedPublisher(req.user)) {
+      return res.status(403).json({
+        success: false,
+        status: false,
+        error: "FORBIDDEN",
+        msg: "Only Admin or Manager can edit news announcements",
+      });
     }
+
+    const newsId = req.params.newsItemId || req.body._id;
+    if (!newsId) {
+      return res.status(400).json({
+        success: false,
+        status: false,
+        error: "VALIDATION_ERROR",
+        msg: "News item ID is required",
+      });
+    }
+
+    const target = await NewsItems.findById(newsId);
+    if (!target) {
+      return res.status(404).json({
+        success: false,
+        status: false,
+        msg: "newsItem is not found",
+        data: null,
+      });
+    }
+
+    const updatePayload = {};
+    if (req.body.title !== undefined) updatePayload.title = String(req.body.title).trim();
+    if (req.body.body !== undefined) updatePayload.body = String(req.body.body).trim();
+    if (req.body.publishAt !== undefined) updatePayload.publishAt = new Date(req.body.publishAt);
+
+    // Update editor attribution
+    const editorName = req.user?.name ||
+      req.user?.fullName ||
+      `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() ||
+      target.publisherName;
+    updatePayload.publisherName = editorName;
+
+    const editedData = await NewsItems.findByIdAndUpdate(
+      target._id,
+      { $set: updatePayload },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      status: true,
+      msg: "edit data is Successfully",
+      data: editedData,
+    });
   } catch (err) {
-    console.log(err);
+    console.error("[editNewsItem error]", err);
+    return res.status(500).json({
+      success: false,
+      status: false,
+      error: "SERVER_ERROR",
+      msg: err.message,
+    });
   }
 };
 
 exports.newsItemsList = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = parseInt(req.query.pageSize) || 5;
-    const sortField = 'type';
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize) || 10);
+    const userRole = req.user?.role || 'Staff';
 
-    const pipeline = [
-      {
-        $sort: { [sortField]: 1 },
-      },
-      {
-        $skip: (page - 1) * pageSize,
-      },
-      {
-        $limit: pageSize,
-      },
-    ];
+    const filter = {};
+    // Non-admin / non-manager users can only see news that has reached publishAt
+    if (userRole !== 'Admin' && userRole !== 'Manager') {
+      filter.publishAt = { $lte: new Date() };
+    }
 
-    const newsItemsList = await NewsItems.aggregate(pipeline);
+    const totalNewsItem = await NewsItems.countDocuments(filter);
+    const newsItemsList = await NewsItems.find(filter)
+      .sort({ publishAt: -1, createdAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize);
 
-    // Count total documents
-    const totalNewsItem = await NewsItems.countDocuments();
-
-    res.json({
-      totalNewsItem: totalNewsItem,
+    return res.status(200).json({
+      success: true,
+      totalNewsItem,
       currentPage: page,
       totalPages: Math.ceil(totalNewsItem / pageSize),
-      newsItemsList: newsItemsList,
+      newsItemsList,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("[newsItemsList error]", err);
+    return res.status(500).json({ success: false, message: 'Server error', error: err.message });
   }
 };
 
 exports.deleteNewsItem = async (req, res) => {
   try {
-    const newsItemId = req.params.newsItemId;
+    if (!isAuthorizedPublisher(req.user)) {
+      return res.status(403).json({
+        success: false,
+        status: false,
+        error: "FORBIDDEN",
+        msg: "Only Admin or Manager can delete news announcements",
+      });
+    }
 
+    const newsItemId = req.params.newsItemId || req.body._id;
     const dataCheck = await NewsItems.findById(newsItemId);
 
     if (dataCheck) {
-      const DeleteData = await NewsItems.findOneAndDelete(
-        { _id: dataCheck._id },
-        req.body
-      );
-
-      res
-        .status(200)
-        .send({
-          status: true,
-          msg: "DATA is successfully deleted",
-          data: DeleteData,
-        });
+      const deletedData = await NewsItems.findByIdAndDelete(dataCheck._id);
+      return res.status(200).json({
+        success: true,
+        status: true,
+        msg: "DATA is successfully deleted",
+        data: deletedData,
+      });
     } else {
-      return res
-        .status(404)
-        .send({ status: false, msg: "newsItem is not found", data: null });
+      return res.status(404).json({
+        success: false,
+        status: false,
+        msg: "newsItem is not found",
+        data: null,
+      });
     }
   } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .send({ status: false, msg: "Internal server error", data: null });
+    console.error("[deleteNewsItem error]", err);
+    return res.status(500).json({
+      success: false,
+      status: false,
+      msg: "Internal server error",
+      data: null,
+      error: err.message,
+    });
   }
 };

@@ -112,7 +112,7 @@ const sanitizeInvoicePayload = async (data) => {
   }
 
   if (!payload.statutorySnapshot && payload.items) {
-    const taxBreakdown = computeStatutoryTaxBreakdown(payload.items, payload.subTotal, payload.discountedPrice);
+    const taxBreakdown = computeStatutoryTaxBreakdown(payload.items, payload.subTotal, payload.discountedPrice, payload.vat);
     payload.statutorySnapshot = {
       issueDateFormatted: formatDutchDate(payload.date || new Date()),
       dueDateFormatted: formatDutchDate(payload.dueDate || new Date(Date.now() + 14 * 86400000)),
@@ -384,7 +384,7 @@ exports.invoiceListByCustomerId = async (req, res) => {
 
 
 exports.DownloadInvoicePDF = async (req, res) => {
-  const { Id } = req.body;
+  const Id = req.body.Id || req.body.invoiceId || req.body.id;
   try {
     const isObjectId = mongoose.Types.ObjectId.isValid(Id);
     const query = isObjectId ? { $or: [{ _id: Id }, { capabilityToken: Id }] } : { capabilityToken: Id };
@@ -433,7 +433,7 @@ exports.DownloadInvoicePDF = async (req, res) => {
 
     // EXEC-20 & EXEC-23: Authoritative Commercial Recalculation & Statutory Breakdown
     const calc = calculateCommercialTotals(invoice);
-    const taxBreakdown = computeStatutoryTaxBreakdown(calc.items, calc.subTotal, calc.discountedPrice);
+    const taxBreakdown = computeStatutoryTaxBreakdown(calc.items, calc.subTotal, calc.discountedPrice, calc.vat);
 
     const freshInvoice = {
       ...(invoice.toObject ? invoice.toObject() : invoice),

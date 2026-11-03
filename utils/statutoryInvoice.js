@@ -48,7 +48,7 @@ function formatCustomerAddress(addr) {
   return String(addr);
 }
 
-function computeStatutoryTaxBreakdown(items = [], subTotal = 0, discountAmount = 0) {
+function computeStatutoryTaxBreakdown(items = [], subTotal = 0, discountAmount = 0, vatMode = 'exclusive') {
   const breakdownMap = {};
 
   (items || []).forEach(item => {
@@ -71,14 +71,27 @@ function computeStatutoryTaxBreakdown(items = [], subTotal = 0, discountAmount =
   const rates = Object.keys(breakdownMap).sort((a, b) => Number(b) - Number(a));
   const subTotalNum = Number(subTotal) || 0;
   const discNum = Number(discountAmount) || 0;
+  const isInclusive = String(vatMode).toLowerCase() === 'inclusive';
 
   return rates.map(rateStr => {
     const rate = Number(rateStr);
     const gross = breakdownMap[rateStr].grossBase;
     const proportion = subTotalNum > 0 ? (gross / subTotalNum) : 0;
-    const netBase = roundToCents(gross - (discNum * proportion));
-    const vatAmount = roundToCents(netBase * (rate / 100));
-    const grossAmount = roundToCents(netBase + vatAmount);
+    const discountedTier = roundToCents(gross - (discNum * proportion));
+
+    let netBase = 0;
+    let vatAmount = 0;
+    let grossAmount = 0;
+
+    if (isInclusive) {
+      grossAmount = discountedTier;
+      netBase = roundToCents(grossAmount / (1 + (rate / 100)));
+      vatAmount = roundToCents(grossAmount - netBase);
+    } else {
+      netBase = discountedTier;
+      vatAmount = roundToCents(netBase * (rate / 100));
+      grossAmount = roundToCents(netBase + vatAmount);
+    }
 
     let rateLabel = `${rate}% Btw`;
     if (rate === 21) {
@@ -154,13 +167,14 @@ function generateTotalsBreakdownHtml(invoice = {}, sym = '€', fmtFn) {
   const net = Number(invoice.net !== undefined ? invoice.net : (subTotal - discountedPrice));
   const btw = Number(invoice.btw !== undefined ? invoice.btw : (invoice.totalVat || 0));
   const total = Number(invoice.total !== undefined ? invoice.total : (net + btw));
+  const isInclusive = String(invoice.vat || invoice.vatType || '').toLowerCase() === 'inclusive';
 
   const hasDiscount = discountPct > 0 || discountedPrice > 0;
 
   return `
     <div class="totals-card" style="margin-left: auto; width: 300px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin-bottom: 25px; font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
       <div class="total-row" style="display: flex; justify-content: space-between; padding: 4px 0; color: #475569;">
-        <span>Subtotal (Excl. BTW):</span>
+        <span>Subtotal (${isInclusive ? 'Incl. BTW' : 'Excl. BTW'}):</span>
         <span style="font-weight: 600; color: #1e293b;">${fmt(subTotal)}</span>
       </div>
       ${hasDiscount ? `
