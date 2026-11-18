@@ -162,19 +162,9 @@ financeSchema.pre('save', async function () {
       return;
     }
 
-    const lastFinance = await this.constructor.findOne({})
-      .sort({ createdAt: -1 });
-
-    let lastIndex = 0;
-    if (lastFinance && lastFinance.index) {
-      const match = String(lastFinance.index).match(/(\d+)$/);
-      if (match) {
-        lastIndex = parseInt(match[1], 10);
-      }
-    }
-
-    const newIndex = `${prefix}${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
-    this.index = newIndex;
+    // UM3-129 / Task 21: Thread-safe atomic quote sequence allocator (E11000 collision proof)
+    const { getNextQuoteIndex } = require('../utils/sequenceGenerator');
+    this.index = await getNextQuoteIndex(isStaging, currentYear);
   } catch (error) {
     throw error;
   }

@@ -100,8 +100,66 @@ async function getNextCreditNoteIndex(isStaging = false, year = new Date().getFu
   return `${prefix}${year}/${String(updatedCounter.seq).padStart(4, '0')}`;
 }
 
+/**
+ * Thread-safe atomic quote sequence allocator.
+ * Produces format: 2026/0001 (or TEST-QUO-2026/0001 in staging).
+ * Guarantees zero duplicate key (E11000) collisions even under high concurrency or pre-existing records.
+ */
+async function getNextQuoteIndex(isStaging = false, year = new Date().getFullYear()) {
+  const prefix = isStaging ? 'TEST-QUO-' : '';
+  const seqKey = `quote_${prefix}${year}`;
+
+  let counter = await Counter.findById(seqKey);
+
+  if (!counter) {
+    const Finance = mongoose.model('Finance');
+    const regex = new RegExp(`^${prefix}${year}/(\\d+)`);
+    const existingQuotes = await Finance.find({
+      index: regex
+    }, 'index').lean();
+
+    let maxNum = 0;
+    existingQuotes.forEach(q => {
+      if (q.index) {
+        const m = String(q.index).match(/(\d+)$/);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+    });
+
+    try {
+      counter = await Counter.findOneAndUpdate(
+        { _id: seqKey },
+        { $setOnInsert: { seq: maxNum } },
+        { upsert: true, new: true }
+      );
+    } catch (e) {
+      counter = await Counter.findById(seqKey);
+    }
+  }
+
+  // Atomically increment counter, and ensure candidateIndex is not already occupied in MongoDB
+  const Finance = mongoose.model('Finance');
+  while (true) {
+    const updatedCounter = await Counter.findOneAndUpdate(
+      { _id: seqKey },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    const candidateIndex = `${prefix}${year}/${String(updatedCounter.seq).padStart(4, '0')}`;
+    const exists = await Finance.findOne({ index: candidateIndex }, '_id').lean();
+    if (!exists) {
+      return candidateIndex;
+    }
+    // If collision exists in the database already (e.g. legacy data), the loop continues to the next number
+  }
+}
+
 module.exports = {
   getNextInvoiceIndex,
   getNextCreditNoteIndex,
+  getNextQuoteIndex,
 };
-

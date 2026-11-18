@@ -93,10 +93,30 @@ exports.finance = async (req, res) => {
       });
     }
 
+    const isStaging = process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
+    const { getNextQuoteIndex } = require('../utils/sequenceGenerator');
+
+    if (!sanitizedBody.index || typeof sanitizedBody.index !== 'string' || sanitizedBody.index.trim() === '') {
+      sanitizedBody.index = await getNextQuoteIndex(isStaging);
+    }
+
     let finance = new Finance(sanitizedBody);
-    const financeData = await finance.save();
+    let financeData;
+    try {
+      financeData = await finance.save();
+    } catch (saveError) {
+      // UM3-129 / Task 21: Auto-retry on duplicate key collision (E11000)
+      if (saveError.code === 11000 && (String(saveError.message).includes('index_1') || saveError.keyPattern?.index)) {
+        console.warn('[FinanceController] Duplicate quote index detected. Allocating fresh atomic sequence index...');
+        finance.index = await getNextQuoteIndex(isStaging);
+        financeData = await finance.save();
+      } else {
+        throw saveError;
+      }
+    }
     res.json(financeData);
   } catch (error) {
+    console.error('[Finance Save Error]:', error);
     res.status(500).json({
       message: 'Failed to save the quote',
       error: error.message
