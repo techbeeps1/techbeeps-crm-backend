@@ -93,8 +93,8 @@ exports.finance = async (req, res) => {
       });
     }
 
-    const isStaging = process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
-    const { getNextQuoteIndex } = require('../utils/sequenceGenerator');
+    const { isStagingEnvironment, getNextQuoteIndex } = require('../utils/sequenceGenerator');
+    const isStaging = isStagingEnvironment();
 
     if (!sanitizedBody.index || typeof sanitizedBody.index !== 'string' || sanitizedBody.index.trim() === '') {
       sanitizedBody.index = await getNextQuoteIndex(isStaging);

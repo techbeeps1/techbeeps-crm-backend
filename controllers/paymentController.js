@@ -228,7 +228,8 @@ const issueCreditNote = async (req, res) => {
     const taxAmount = roundToCents(cleanAmount - netAmount);
 
     // Allocate atomic sequence index: CN-YYYY/XXXX
-    const isStaging = invoice.isStaging || process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
+    const { isStagingEnvironment } = require('../utils/sequenceGenerator');
+    const isStaging = typeof invoice.isStaging === 'boolean' ? invoice.isStaging : isStagingEnvironment();
     const currentYear = new Date().getFullYear();
     const creditNoteIndex = await getNextCreditNoteIndex(isStaging, currentYear);
 

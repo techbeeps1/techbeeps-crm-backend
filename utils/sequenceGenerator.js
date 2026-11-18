@@ -2,10 +2,30 @@ const Counter = require('../models/counterModel');
 const mongoose = require('mongoose');
 
 /**
+ * Determines whether the current environment is Staging/Testing or Live Statutory Production.
+ * Enforces Dutch Belastingdienst compliance: All test documents must bear TEST- prefix.
+ *
+ * Rules:
+ * 1. If IS_PRODUCTION is 'true' or IS_STAGING is 'false' -> false (Official Live Production).
+ * 2. If running on Vercel (*.vercel.app), localhost, or NODE_ENV !== 'production' -> true (Staging / Test).
+ * 3. If IS_STAGING is 'true' -> true.
+ */
+function isStagingEnvironment() {
+  if (process.env.IS_PRODUCTION === 'true' || process.env.IS_STAGING === 'false') {
+    return false;
+  }
+  return (
+    process.env.NODE_ENV !== 'production' ||
+    process.env.IS_STAGING === 'true' ||
+    Boolean(process.env.VERCEL)
+  );
+}
+
+/**
  * Thread-safe atomic invoice sequence allocator for Belastingdienst compliance.
  * Guarantee: Strictly sequential, gap-free, zero-collision invoice numbers.
  */
-async function getNextInvoiceIndex(Type = 'invoice', isStaging = false, year = new Date().getFullYear()) {
+async function getNextInvoiceIndex(Type = 'invoice', isStaging = isStagingEnvironment(), year = new Date().getFullYear()) {
   const prefix = isStaging ? 'TEST-INV-' : '';
   const seqKey = `invoice_${prefix}${year}_${Type}`;
 
@@ -56,7 +76,7 @@ async function getNextInvoiceIndex(Type = 'invoice', isStaging = false, year = n
  * Thread-safe atomic credit note sequence allocator.
  * Produces format: CN-2026/0001 (or TEST-CN-2026/0001 in staging).
  */
-async function getNextCreditNoteIndex(isStaging = false, year = new Date().getFullYear()) {
+async function getNextCreditNoteIndex(isStaging = isStagingEnvironment(), year = new Date().getFullYear()) {
   const prefix = isStaging ? 'TEST-CN-' : 'CN-';
   const seqKey = `credit_note_${prefix}${year}`;
 
@@ -105,7 +125,7 @@ async function getNextCreditNoteIndex(isStaging = false, year = new Date().getFu
  * Produces format: 2026/0001 (or TEST-QUO-2026/0001 in staging).
  * Guarantees zero duplicate key (E11000) collisions even under high concurrency or pre-existing records.
  */
-async function getNextQuoteIndex(isStaging = false, year = new Date().getFullYear()) {
+async function getNextQuoteIndex(isStaging = isStagingEnvironment(), year = new Date().getFullYear()) {
   const prefix = isStaging ? 'TEST-QUO-' : '';
   const seqKey = `quote_${prefix}${year}`;
 
@@ -159,6 +179,7 @@ async function getNextQuoteIndex(isStaging = false, year = new Date().getFullYea
 }
 
 module.exports = {
+  isStagingEnvironment,
   getNextInvoiceIndex,
   getNextCreditNoteIndex,
   getNextQuoteIndex,

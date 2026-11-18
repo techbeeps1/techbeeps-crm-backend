@@ -134,7 +134,10 @@ const financeSchema = new mongoose.Schema({
   },
   isStaging: {
     type: Boolean,
-    default: () => process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true',
+    default: () => {
+      const { isStagingEnvironment } = require('../utils/sequenceGenerator');
+      return isStagingEnvironment();
+    },
   },
 }, { timestamps: true });
 
@@ -151,7 +154,8 @@ financeSchema.pre('save', async function () {
       this.tokenExpiresAt = expiry;
     }
 
-    const isStaging = process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
+    const { isStagingEnvironment, getNextQuoteIndex } = require('../utils/sequenceGenerator');
+    const isStaging = isStagingEnvironment();
     const prefix = isStaging ? 'TEST-QUO-' : '';
     const currentYear = new Date().getFullYear();
 
@@ -163,7 +167,6 @@ financeSchema.pre('save', async function () {
     }
 
     // UM3-129 / Task 21: Thread-safe atomic quote sequence allocator (E11000 collision proof)
-    const { getNextQuoteIndex } = require('../utils/sequenceGenerator');
     this.index = await getNextQuoteIndex(isStaging, currentYear);
   } catch (error) {
     throw error;

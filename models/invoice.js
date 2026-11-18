@@ -81,7 +81,10 @@ const invoiceSchema = new mongoose.Schema({
   },
   isStaging: {
     type: Boolean,
-    default: () => process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true',
+    default: () => {
+      const { isStagingEnvironment } = require('../utils/sequenceGenerator');
+      return isStagingEnvironment();
+    },
   },
   idempotencyKey: {
     type: String,
@@ -119,7 +122,8 @@ invoiceSchema.pre('save', async function () {
     this.tokenExpiresAt = expiry;
   }
 
-  const isStaging = process.env.NODE_ENV !== 'production' || process.env.IS_STAGING === 'true';
+  const { isStagingEnvironment, getNextInvoiceIndex } = require('../utils/sequenceGenerator');
+  const isStaging = isStagingEnvironment();
   const prefix = isStaging ? 'TEST-INV-' : '';
   const currentYear = new Date().getFullYear();
 
@@ -132,7 +136,6 @@ invoiceSchema.pre('save', async function () {
   }
 
   const Type = this.Type || 'invoice';
-  const { getNextInvoiceIndex } = require('../utils/sequenceGenerator');
   this.index = await getNextInvoiceIndex(Type, isStaging, currentYear);
 });
 
