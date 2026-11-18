@@ -8,6 +8,7 @@ const ValuationRooms = require("../../models/Valuation/valuationRoomDetail");
 const ServiceType = require("../../models/Valuation/serviceTypeModel");
 const { validatePhoneNumber } = require("../../utils/phoneValidator");
 const { calculateCommercialTotals } = require("../../utils/moneyCalculator");
+const { executeAcceptance } = require("../../utils/quoteAcceptanceEngine");
 
 exports.valuationMaster = async (req, res) => {
   try {
@@ -114,11 +115,8 @@ exports.valuationMaster = async (req, res) => {
       jobStatus = "Draft";
     }
 
-    const quoteStatus = isSignWithCustomer
-      ? "Accepted"
-      : isSendImmediately
-        ? "Sent"
-        : "Draft";
+    // Direct assignment to 'Accepted' is forbidden; quotes start in 'Sent' or 'Draft' and are accepted through executeAcceptance
+    const quoteStatus = isSendImmediately ? "Sent" : "Draft";
 
     if (!customerExists) {
       if (customer && (customer.firstName || customer.name || customer.email || customer.mobile || customer.phone)) {
@@ -209,6 +207,10 @@ exports.valuationMaster = async (req, res) => {
       const validOfferId = offer?._id && mongoose.Types.ObjectId.isValid(offer._id) ? offer._id : null;
 
       if (validOfferId) {
+        const existingQuote = await Finance.findById(validOfferId);
+        if (existingQuote && ['Accepted', 'Superseded'].includes(existingQuote.Status)) {
+          return res.status(409).json({ error: `Cannot modify quote in ${existingQuote.Status} status.` });
+        }
         finance = await Finance.findByIdAndUpdate(
           validOfferId,
           {
@@ -223,6 +225,9 @@ exports.valuationMaster = async (req, res) => {
         // Idempotent retry: check if a Finance quote already exists for this job
         finance = await Finance.findOne({ job: job._id });
         if (finance) {
+          if (['Accepted', 'Superseded'].includes(finance.Status)) {
+            return res.status(409).json({ error: `Cannot modify quote in ${finance.Status} status.` });
+          }
           finance = await Finance.findByIdAndUpdate(
             finance._id,
             {
@@ -241,6 +246,28 @@ exports.valuationMaster = async (req, res) => {
             job: job._id,
             Status: quoteStatus,
           });
+        }
+      }
+
+      // If signWithCustomer is requested, route acceptance via authoritative executeAcceptance engine
+      if (isSignWithCustomer && finance && finance._id) {
+        try {
+          const acceptanceResult = await executeAcceptance({
+            quoteIdOrToken: finance._id,
+            acceptancePayload: {
+              method: 'ON_SITE_SIGNATURE',
+              signature: req.body.signature || req.body.offer?.signature || 'ON_SITE_SIGNATURE',
+              version: finance.version || 1,
+            },
+            staffUser: req.user || { role: 'Staff' },
+            clientIp: req.ip || '',
+            userAgent: req.get ? req.get('user-agent') : '',
+          });
+          if (acceptanceResult && acceptanceResult.quote) {
+            finance = acceptanceResult.quote;
+          }
+        } catch (acceptErr) {
+          console.error('[valuationMaster] Error executing on-site acceptance:', acceptErr.message);
         }
       }
     }
@@ -347,7 +374,10 @@ exports.valuationMaster = async (req, res) => {
 
     // 8️⃣ **Update JobSchedule**
     if (customerExists) job.customer = customerExists._id;
-    job.status = jobStatus;
+    // Only update job status if newly created or currently in Draft/Pending state
+    if (!job.status || ['Draft', 'Pending', 'draft', 'pending'].includes(job.status)) {
+      job.status = jobStatus;
+    }
     job.package = resolvedPackageId || undefined;
     if (load || job.load) job.load = normalizeAddress(load, job.load);
     if (unload || job.unload) job.unload = normalizeAddress(unload, job.unload);

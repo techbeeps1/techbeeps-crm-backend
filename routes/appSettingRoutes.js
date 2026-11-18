@@ -3,6 +3,8 @@ const router = express.Router();
 const AppSettings = require('../models/appSettingModel');
 const SalesGroup = require('../models/salesgroupModel');
 const nodemailer = require('nodemailer');
+const authMiddleware = require('../middlewares/authMiddlerware');
+const roleMiddleware = require('../middlewares/roleMiddleware');
 
 router.get('/available-settings', async (req, res) => {
     try {
@@ -52,7 +54,7 @@ router.get('/available-settings', async (req, res) => {
     }
 });
 
-router.post('/save-settings', async (req, res) => {
+router.post('/save-settings', authMiddleware, roleMiddleware('Admin'), async (req, res) => {
     try {
         const {
             language,
@@ -106,7 +108,7 @@ router.post('/save-settings', async (req, res) => {
     }
 });
 
-router.post('/send-admin-test-email', async (req, res) => {
+router.post('/send-admin-test-email', authMiddleware, roleMiddleware('Admin'), async (req, res) => {
     try {
         const { email } = req.body;
         let targetEmail = email;

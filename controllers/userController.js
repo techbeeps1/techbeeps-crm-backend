@@ -60,17 +60,33 @@ const registerUser = async (req, res) => {
     const bcryptSalt = bcrypt.genSaltSync(10);
     const hashedPassword = await bcrypt.hash(password, bcryptSalt);
 
-    let assignedAccess = access;
-    if (!assignedAccess || !Array.isArray(assignedAccess) || assignedAccess.length === 0) {
-      assignedAccess = role === 'Admin' ? ALL_CRM_MODULES : ['Dashboard'];
+    const isAdminRequester = req.user && req.user.role === 'Admin';
+    const totalUsers = await User.countDocuments();
+    const isFirstUserBootstrap = totalUsers === 0;
+
+    let finalRole = 'Staff';
+    let finalAccess = ['Dashboard'];
+
+    if (isAdminRequester || isFirstUserBootstrap) {
+      const allowedRoles = ['Admin', 'Staff', 'Agent', 'Driver'];
+      finalRole = allowedRoles.includes(role) ? role : 'Staff';
+      finalAccess = (Array.isArray(access) && access.length > 0)
+        ? access
+        : (finalRole === 'Admin' ? ALL_CRM_MODULES : ['Dashboard']);
+    } else {
+      if (role && role.toLowerCase() === 'admin') {
+        return res.status(403).json({ msg: "Self-registration as Admin is forbidden." });
+      }
+      finalRole = 'Staff';
+      finalAccess = ['Dashboard'];
     }
 
     const newUser = new User({
       username,
       email,
       password: hashedPassword,
-      role: role || "Staff",
-      access: assignedAccess,
+      role: finalRole,
+      access: finalAccess,
       gender: gender || undefined,
       language: language || undefined,
       dob: dob ? new Date(dob) : undefined,
@@ -92,7 +108,9 @@ const registerUser = async (req, res) => {
       isRestricted: false,
     });
     await newUser.save();
-    return res.status(201).json({ msg: "User registered successfully", user: newUser });
+    const userResponse = newUser.toObject();
+    delete userResponse.password;
+    return res.status(201).json({ msg: "User registered successfully", user: userResponse });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Server error" });
@@ -131,7 +149,11 @@ const loginUser = async (req, res) => {
       access: userAccess,
       username: user.username,
     };
-    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('[loginUser] FATAL: JWT_SECRET environment variable is missing.');
+      return res.status(500).json({ msg: "Server authentication configuration error." });
+    }
     jwt.sign(
       payload,
       jwtSecret,
@@ -532,11 +554,13 @@ const DeleteUser = async (req, res) => {
     return res.status(400).json({ msg: "User ID is required" }); // Handle missing ID
   }
   try {
-    const user = await User.findByIdAndDelete(id);
+    const user = await User.findByIdAndDelete(id).select("-password");
     if (!user) {
       return res.status(404).json({ msg: "User not found" });
     }
-    return res.status(200).json({ msg: "User deleted successfully", user });
+    const userObj = user.toObject ? user.toObject() : { ...(user._doc || user) };
+    delete userObj.password;
+    return res.status(200).json({ msg: "User deleted successfully", user: userObj });
   } catch (err) {
     console.error(err); // Log the error for debugging
     return res.status(500).json({ msg: "Server error" }); // Handle server errors
@@ -551,12 +575,26 @@ const ResetPassword = async (req, res) => {
       .status(400)
       .json({ msg: "Email, OTP, and new password are required" });
   }
+
+  // Strict type check against NoSQL operator injection (e.g. { $ne: "" }, { $gt: "" })
+  if (typeof email !== 'string' || (typeof otp !== 'string' && typeof otp !== 'number') || typeof newPassword !== 'string') {
+    return res.status(400).json({ msg: "Invalid input format." });
+  }
+
+  const safeEmail = String(email).trim().toLowerCase();
+  const safeOtp = String(otp).trim();
+  const safeNewPassword = String(newPassword);
+
+  if (!/^\d{6}$/.test(safeOtp)) {
+    return res.status(400).json({ msg: "OTP must be a valid 6-digit number." });
+  }
+
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: safeEmail });
     if (!user) {
       return res.status(404).json({ msg: "User not found" });
     }
-    const emailDomain = (email || '').split('@')[1]?.toLowerCase();
+    const emailDomain = (safeEmail || '').split('@')[1]?.toLowerCase();
     const DISPOSABLE_EMAIL_DOMAINS = ['mailinator.com', 'tempmail.com', 'guerrillamail.com', 'yopmail.com', 'trashmail.com'];
     if (DISPOSABLE_EMAIL_DOMAINS.includes(emailDomain)) {
       return res.status(403).json({ msg: "Password recovery is disabled for public disposable mailbox domains." });
@@ -564,15 +602,15 @@ const ResetPassword = async (req, res) => {
     if (user.isRestricted || user.isActive === false) {
       return res.status(403).json({ msg: "Password recovery is disabled for restricted accounts." });
     }
-    const record = await Otp.findOne({ email, otp });
+    const record = await Otp.findOne({ email: safeEmail, otp: safeOtp });
     if (record) {
-      await Otp.deleteOne({ email }); // OTP can only be used once
+      await Otp.deleteOne({ email: safeEmail }); // OTP can only be used once
     } else {
       return res.status(400).json({ msg: "Invalid or expired OTP" });
     }
 
     const salt = await bcrypt.genSalt(10);
-    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+    const hashedNewPassword = await bcrypt.hash(safeNewPassword, salt);
     user.password = hashedNewPassword;
     await user.save();
     return res.status(200).json({ msg: "Password updated successfully" });
@@ -584,9 +622,17 @@ const ResetPassword = async (req, res) => {
 const UpdateDetails = async (req, res) => {
   const { id, access, role, status, isActive, isRestricted } = req.body;
   try {
-    const targetId = id || req.body._id || req.body.userId || req.user?.id || req.user?.userId || req.user?.user?.id || req.user?.user?.userId;
-    if (!targetId) {
+    const requesterId = String(req.user?.id || req.user?.userId || req.user?._id || req.user?.user?.id || req.user?.user?.userId || '');
+    const isAdmin = req.user?.role === 'Admin';
+    const rawTargetId = id || req.body._id || req.body.userId || requesterId;
+    if (!rawTargetId) {
       return res.status(400).json({ msg: "User ID is required for update." });
+    }
+    const targetId = String(rawTargetId);
+
+    // If caller is NOT Admin, they can only update their own profile
+    if (!isAdmin && requesterId && targetId !== requesterId) {
+      return res.status(403).json({ msg: "Forbidden: You can only update your own profile." });
     }
 
     const updatePayload = { ...req.body };
@@ -594,12 +640,23 @@ const UpdateDetails = async (req, res) => {
     delete updatePayload._id;
     delete updatePayload.userId;
 
-    // Do not overwrite password with empty/undefined string
-    if (!updatePayload.password || typeof updatePayload.password !== 'string' || updatePayload.password.trim() === '') {
+    // Non-Admin privilege protection: cannot change role, access, active status, password, or email
+    if (!isAdmin) {
+      delete updatePayload.role;
+      delete updatePayload.access;
+      delete updatePayload.isActive;
+      delete updatePayload.isRestricted;
+      delete updatePayload.status;
       delete updatePayload.password;
+      delete updatePayload.email;
     } else {
-      const bcryptSalt = bcrypt.genSaltSync(10);
-      updatePayload.password = await bcrypt.hash(updatePayload.password, bcryptSalt);
+      // Do not overwrite password with empty/undefined string
+      if (!updatePayload.password || typeof updatePayload.password !== 'string' || updatePayload.password.trim() === '') {
+        delete updatePayload.password;
+      } else {
+        const bcryptSalt = bcrypt.genSaltSync(10);
+        updatePayload.password = await bcrypt.hash(updatePayload.password, bcryptSalt);
+      }
     }
 
     // Safely parse Date fields
@@ -642,17 +699,19 @@ const UpdateDetails = async (req, res) => {
       delete updatePayload.status;
     }
 
-    if (isActive !== undefined) {
+    if (isActive !== undefined && isAdmin) {
       updatePayload.isActive = Boolean(isActive);
     }
-    if (isRestricted !== undefined) {
+    if (isRestricted !== undefined && isAdmin) {
       updatePayload.isRestricted = Boolean(isRestricted);
     }
 
-    if (role === 'Admin' && (!access || !Array.isArray(access) || access.length === 0)) {
-      updatePayload.access = ALL_CRM_MODULES;
-    } else if (Array.isArray(access)) {
-      updatePayload.access = access;
+    if (isAdmin) {
+      if (role === 'Admin' && (!access || !Array.isArray(access) || access.length === 0)) {
+        updatePayload.access = ALL_CRM_MODULES;
+      } else if (Array.isArray(access)) {
+        updatePayload.access = access;
+      }
     }
 
     const updatedUser = await User.findByIdAndUpdate(
@@ -666,6 +725,7 @@ const UpdateDetails = async (req, res) => {
     }
 
     const updatedObj = updatedUser.toObject ? updatedUser.toObject() : { ...(updatedUser._doc || updatedUser) };
+    delete updatedObj.password;
     updatedObj.id = updatedUser._id;
     updatedObj._id = updatedUser._id;
     updatedObj.userId = updatedUser._id;
@@ -685,13 +745,15 @@ const MakeAdmin = async (req, res) => {
       id,
       { role },
       { new: true, runValidators: true },
-    );
+    ).select("-password");
     if (!updatedUser) {
       return res.status(404).json({ msg: "User not found." });
     }
+    const userObj = updatedUser.toObject ? updatedUser.toObject() : { ...(updatedUser._doc || updatedUser) };
+    delete userObj.password;
     return res
       .status(200)
-      .json({ msg: "Admin role assign successfully.", user: updatedUser });
+      .json({ msg: "Admin role assign successfully.", user: userObj });
   } catch (err) {
     console.error(err); // Log the error for debugging
     return res.status(500).json({ msg: "Server error" });

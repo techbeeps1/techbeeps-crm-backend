@@ -40,7 +40,7 @@ async function runTests() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('[Setup] Connected to MongoDB');
 
-    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const jwtSecret = process.env.JWT_SECRET;
     const adminId = new mongoose.Types.ObjectId();
     const adminToken = jwt.sign(
       { userId: adminId.toString(), role: 'Admin', username: 'Warehouse Storage Admin' },

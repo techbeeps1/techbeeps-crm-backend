@@ -30,6 +30,20 @@ function formatTime(val) {
 }
 
 /**
+ * Escapes unsafe HTML characters to prevent XSS/injection into emails.
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  const s = String(str);
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * Helper to format address objects cleanly.
  */
 function formatAddressString(addr) {
@@ -139,7 +153,8 @@ function renderEmailTemplate(htmlContent, context = {}) {
   let rendered = htmlContent.replace(TECHBEEPS_LOGO_REGEX, activeLogo);
 
   const invId = inv._id || inv.id || '';
-  const tokenIdentifier = inv.capabilityToken || context.capabilityToken || invId;
+  // Never expose raw database ObjectId in customer quote acceptance links (UM3-012)
+  const tokenIdentifier = inv.capabilityToken || context.capabilityToken || '';
   const acceptQuoteUrl = context.acceptQuoteUrl || context.quoteUrl || context.link || (tokenIdentifier ? `https://universal-movers-front.vercel.app/quotes/accept/${tokenIdentifier}` : 'https://universal-movers-front.vercel.app');
   const otpVal = context.otp || ext.otp || (context.data && context.data.otp) || '';
 
@@ -224,6 +239,9 @@ function renderEmailTemplate(htmlContent, context = {}) {
     }, data);
 
     if (value !== undefined && value !== null) {
+      if (typeof value === 'string') {
+        return escapeHtml(value);
+      }
       return String(value);
     }
     return '';
@@ -246,4 +264,5 @@ module.exports = {
   normalizeCompany,
   normalizeCustomer,
   renderEmailTemplate,
+  escapeHtml,
 };

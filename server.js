@@ -170,6 +170,7 @@ const appointmentRoutes = require("./routes/appointmentRoutes")
 const activityRoutes = require("./routes/activityRoutes");
 const appSettingsRoutes = require("./routes/appSettingRoutes")
 const valuationRoutes = require('./routes/Valuation/valuationRoutes');
+const routingRoutes = require('./routes/routingRoutes');
 //const iconRoutes = require('./routes/Valuation/iconRoutes');
 const employabilityRoutes = require("./routes/employabilityRoutes");
 const leaveRoutes = require("./routes/leaveRoutes");
@@ -190,6 +191,7 @@ server.get("/health", (req, res) => {
 
 // valuation routes 
 server.use("/api", valuationRoutes);
+server.use("/api/routing", authMiddleware, routingRoutes);
 //server.use('/api/icons', iconRoutes);
 
 server.use("/api", documentTemplateRoutes);

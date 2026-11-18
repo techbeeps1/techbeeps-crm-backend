@@ -127,7 +127,9 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
   }
 
   const isObjectId = mongoose.Types.ObjectId.isValid(quoteIdOrToken);
-  const query = isObjectId
+  // UM3-012: Public unauthenticated acceptance MUST strictly look up by capabilityToken only.
+  // Internal staff with authenticated session can look up by _id or capabilityToken.
+  const query = (staffUser && isObjectId)
     ? { $or: [{ _id: quoteIdOrToken }, { capabilityToken: quoteIdOrToken }] }
     : { capabilityToken: quoteIdOrToken };
 

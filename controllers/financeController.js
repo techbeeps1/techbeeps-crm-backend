@@ -21,6 +21,20 @@ const { resolveTaxRate } = require('../utils/taxCatalog');
 const { validateAcceptanceEligibility, executeAcceptance } = require('../utils/quoteAcceptanceEngine');
 const { dispatchOutboxEmail, EMAIL_EVENTS } = require('../utils/emailOutboxService');
 
+function getAuthenticatedStaff(req) {
+  if (req.user) return req.user;
+  const authHeader = req.header ? req.header('Authorization') : req.headers?.['authorization'];
+  const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.replace('Bearer ', '').trim() : null;
+  if (!token || token === 'null' || token === 'undefined') return null;
+  try {
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) return null;
+    return jwt.verify(token, jwtSecret);
+  } catch (err) {
+    return null;
+  }
+}
+
 const sanitizeFinancePayload = async (data) => {
   if (!data) return data;
   const payload = { ...data };
@@ -98,14 +112,7 @@ exports.acceptQuote = async (req, res) => {
   const idempotencyKey = req.headers['x-idempotency-key'] || acceptancePayload.idempotencyKey;
 
   try {
-    let staffUser = null;
-    const authHeader = req.header('Authorization');
-    const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.replace('Bearer ', '').trim() : null;
-    if (token && token !== 'null' && token !== 'undefined') {
-      try {
-        staffUser = jwt.verify(token, process.env.JWT_SECRET);
-      } catch (err) {}
-    }
+    const staffUser = getAuthenticatedStaff(req);
 
     const result = await executeAcceptance({
       quoteIdOrToken: id,
@@ -282,7 +289,7 @@ exports.updateInvoice = async (req, res) => {
 exports.financeDetail = async (req, res) => {
   const { Id } = req.params;
   const { template } = req.query;
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  const staffUser = getAuthenticatedStaff(req);
 
   try {
     if (!Id || Id === 'undefined' || Id === 'null') {
@@ -290,7 +297,11 @@ exports.financeDetail = async (req, res) => {
     }
 
     const isObjectId = mongoose.Types.ObjectId.isValid(Id);
-    const query = isObjectId ? { $or: [{ _id: Id }, { capabilityToken: Id }] } : { capabilityToken: Id };
+    // UM3-012: Enforce capabilityToken for unauthenticated public requests.
+    // Authenticated staff may query by _id or capabilityToken.
+    const query = (staffUser && isObjectId)
+      ? { $or: [{ _id: Id }, { capabilityToken: Id }] }
+      : { capabilityToken: Id };
 
     const finance = await Finance.findOne(query).populate({
       path: 'customer',
@@ -307,6 +318,25 @@ exports.financeDetail = async (req, res) => {
       return res.status(404).json({ message: "Quotation not found" });
     }
 
+    // Lazy backfill: If an authenticated staff accesses a legacy quote without capabilityToken, backfill it
+    if (staffUser && !finance.capabilityToken) {
+      try {
+        const crypto = require('crypto');
+        finance.capabilityToken = crypto.randomBytes(32).toString('hex');
+        if (!finance.tokenExpiresAt) {
+          const expiry = new Date();
+          expiry.setDate(expiry.getDate() + 30);
+          finance.tokenExpiresAt = expiry;
+        }
+        await Finance.findByIdAndUpdate(finance._id, {
+          capabilityToken: finance.capabilityToken,
+          tokenExpiresAt: finance.tokenExpiresAt,
+        });
+      } catch (backfillErr) {
+        console.warn('Lazy backfill warning:', backfillErr.message);
+      }
+    }
+
     // EXEC-20: Authoritative Recalculation (Eliminate stale memoization/cached totals)
     const calc = calculateCommercialTotals(finance);
     finance.subTotal = calc.subTotal;
@@ -318,12 +348,12 @@ exports.financeDetail = async (req, res) => {
     finance.totalVat = calc.totalVat;
 
     // Capability token expiration check for public customers
-    if (!token && finance.tokenExpiresAt && new Date() > new Date(finance.tokenExpiresAt)) {
+    if (!staffUser && finance.tokenExpiresAt && new Date() > new Date(finance.tokenExpiresAt)) {
       return res.status(410).json({ message: "This quotation link has expired. Please contact us for a refreshed quote." });
     }
 
     // If request is from an unauthenticated public recipient, sanitize DTO
-    if (!token) {
+    if (!staffUser) {
       const { formatCustomerAddress, computeStatutoryTaxBreakdown, formatDutchDate } = require('../utils/statutoryInvoice');
       const { formatEnumDisplay, ENUM_TRANSLATIONS } = require('../utils/dutchLocaleUtil');
       const rawBreakdown = computeStatutoryTaxBreakdown(calc.items, calc.subTotal, calc.discount);
@@ -519,14 +549,18 @@ exports.financeListByCustomerId = async (req, res) => {
 
 exports.DownloadInvoicePDF = async (req, res) => {
   const { Id } = req.body;
+  const staffUser = getAuthenticatedStaff(req);
 
   try {
-    if (!Id) {
+    if (!Id || Id === 'undefined' || Id === 'null') {
       return res.status(400).send("Invoice ID is required");
     }
 
     const isObjectId = mongoose.Types.ObjectId.isValid(Id);
-    const query = isObjectId ? { $or: [{ _id: Id }, { capabilityToken: Id }] } : { capabilityToken: Id };
+    // UM3-012: Enforce capabilityToken for unauthenticated public requests
+    const query = (staffUser && isObjectId)
+      ? { $or: [{ _id: Id }, { capabilityToken: Id }] }
+      : { capabilityToken: Id };
 
     const invoice = await Finance.findOne(query)
       .populate("customer")
@@ -1066,16 +1100,31 @@ exports.reviseQuotation = async (req, res) => {
 exports.rejectQuotation = async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body || {};
+  const staffUser = getAuthenticatedStaff(req);
 
   try {
+    if (!id || id === 'undefined' || id === 'null') {
+      return res.status(400).json({ error: 'INVALID_ID', message: 'Quote identifier is required.' });
+    }
+
     const isObjectId = mongoose.Types.ObjectId.isValid(id);
-    const query = isObjectId ? { $or: [{ _id: id }, { capabilityToken: id }] } : { capabilityToken: id };
+    // UM3-012: Enforce capabilityToken for unauthenticated rejection
+    const query = (staffUser && isObjectId)
+      ? { $or: [{ _id: id }, { capabilityToken: id }] }
+      : { capabilityToken: id };
 
     const quote = await Finance.findOne(query);
     if (!quote) {
       return res.status(404).json({
         error: 'QUOTE_NOT_FOUND',
         message: 'Quotation not found.',
+      });
+    }
+
+    if (!staffUser && quote.tokenExpiresAt && new Date() > new Date(quote.tokenExpiresAt)) {
+      return res.status(410).json({
+        error: 'QUOTE_EXPIRED',
+        message: 'This quotation link has expired.',
       });
     }
 
@@ -1096,11 +1145,11 @@ exports.rejectQuotation = async (req, res) => {
     quote.Status = 'Rejected';
     quote.rejectedAt = new Date();
     quote.rejectionReason = reason || 'Quotation declined';
-    quote.rejectedBy = req.user ? 'STAFF' : 'CUSTOMER';
+    quote.rejectedBy = staffUser ? 'STAFF' : 'CUSTOMER';
     await quote.save();
 
-    const actor = req.user ? 'Staff' : 'Customer';
-    const actorName = req.user?.username || req.user?.name || quote.customer?.firstName || 'Customer';
+    const actor = staffUser ? 'Staff' : 'Customer';
+    const actorName = staffUser?.username || staffUser?.name || quote.customer?.firstName || 'Customer';
     try {
       const Activity = require('../models/activityModel');
       await Activity.create({

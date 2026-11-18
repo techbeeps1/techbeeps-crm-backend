@@ -9,7 +9,11 @@ const authMiddleware = async (req, res, next) => {
     return res.status(401).json({ msg: 'No token, authorization denied' });
   }
   try {
-    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('[authMiddleware] FATAL: JWT_SECRET environment variable is missing.');
+      return res.status(500).json({ msg: 'Server authentication configuration error' });
+    }
     const decoded = jwt.verify(token, jwtSecret);
     const innerUser = (decoded && typeof decoded.user === 'object' && decoded.user !== null) ? decoded.user : {};
 
@@ -48,7 +52,11 @@ const optionalAuthMiddleware = async (req, res, next) => {
     return next();
   }
   try {
-    const jwtSecret = process.env.JWT_SECRET || 'techbeeps_crm_default_jwt_secret_key_2026';
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('[authMiddleware] FATAL: JWT_SECRET environment variable is missing.');
+      return res.status(500).json({ msg: 'Server authentication configuration error' });
+    }
     const decoded = jwt.verify(token, jwtSecret);
     const innerUser = (decoded && typeof decoded.user === 'object' && decoded.user !== null) ? decoded.user : {};
     const targetUserId = innerUser.id || innerUser.userId || innerUser._id || decoded.id || decoded.userId || decoded._id;

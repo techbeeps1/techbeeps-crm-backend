@@ -168,11 +168,13 @@ app.put('/chatBackend/messages/:messageId/markAsRead', async (req, res) => {
 app.get('/chatBackend/profile', async (req, res) => {
   try {
     const userData = await getUserDataFromtoken(req);
-    const user = await User.findById(userData.userId); // Use findById to get user by userId
+    const user = await User.findById(userData.userId).select("-password"); // Use findById to get user by userId
     if (!user) {
       return res.status(404).json({ msg: 'User not found' }); // Use 404 for not found
     }
-    return res.status(200).json(user);
+    const userObj = user.toObject ? user.toObject() : { ...(user._doc || user) };
+    delete userObj.password;
+    return res.status(200).json(userObj);
   } catch (error) {
     if (error.message === 'No token provided') {
       return res.status(401).json({ error: 'No token provided' });

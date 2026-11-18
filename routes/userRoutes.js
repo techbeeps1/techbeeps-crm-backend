@@ -6,10 +6,10 @@ const roleMiddleware = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 
-router.post('/register', registerUser);
+router.post('/register', optionalAuthMiddleware, registerUser);
 router.post('/login', loginUser);
 router.get('/profile', authMiddleware, ProfileUser);
-router.get('/all', optionalAuthMiddleware, Allusers);
+router.get('/all', authMiddleware, Allusers);
 router.get('/employees/:date', authMiddleware, Allemployees);
 router.post('/deleteuser', authMiddleware, roleMiddleware('Admin'), DeleteUser);
 router.post('/reset_password', ResetPassword);

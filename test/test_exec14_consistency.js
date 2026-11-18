@@ -1,3 +1,4 @@
+require('dotenv').config();
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -6,8 +7,8 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 
 const API_BASE = 'http://localhost:8080';
-const MONGO_URI = 'mongodb+srv://muskan30092000:CpMmALXlFF4kUn5m@cluster0.sneqypv.mongodb.net/CRMatlas?retryWrites=true&w=majority';
-const JWT_SECRET = 'abcdefghijklmnopqrstuvwxyz';
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Generate admin bearer token
 const token = jwt.sign(

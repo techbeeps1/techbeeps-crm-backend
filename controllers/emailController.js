@@ -21,12 +21,13 @@ const transporter = nodemailer.createTransport({
 
 exports.sendOtp = async (req, res) => {
     const { email } = req.body;
-    const otp = crypto.randomInt(100000, 999999).toString();
-    let user = await User.findOne({ email });
-    if (!email) {
-        return res.status(400).json({ message: 'Email is required' });
+    if (!email || typeof email !== 'string') {
+        return res.status(400).json({ message: 'A valid email string is required' });
     }
-    const emailDomain = (email || '').split('@')[1]?.toLowerCase();
+    const safeEmail = String(email).trim().toLowerCase();
+    const otp = crypto.randomInt(100000, 999999).toString();
+    let user = await User.findOne({ email: safeEmail });
+    const emailDomain = (safeEmail || '').split('@')[1]?.toLowerCase();
     const DISPOSABLE_EMAIL_DOMAINS = ['mailinator.com', 'tempmail.com', 'guerrillamail.com', 'yopmail.com', 'trashmail.com'];
     if (DISPOSABLE_EMAIL_DOMAINS.includes(emailDomain)) {
         return res.status(403).json({ message: 'Password recovery is disabled for public disposable mailbox domains.' });
@@ -35,7 +36,7 @@ exports.sendOtp = async (req, res) => {
         return res.status(403).json({ message: 'Password recovery is disabled for restricted accounts.' });
     }
     try {
-        await Otp.findOneAndUpdate({ email }, { otp }, { upsert: true });
+        await Otp.findOneAndUpdate({ email: safeEmail }, { otp }, { upsert: true });
         const company = await CompanyDetails.findOne();
         const emailTemplate = await EmailTemplate.findOne({
             $or: [
@@ -84,10 +85,21 @@ exports.sendOtp = async (req, res) => {
 
 exports.verifyOtp = async (req, res) => {
     const { email, otp } = req.body;
+    if (!email || !otp) {
+        return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+    if (typeof email !== 'string' || (typeof otp !== 'string' && typeof otp !== 'number')) {
+        return res.status(400).json({ message: 'Invalid email or OTP format' });
+    }
+    const safeEmail = String(email).trim().toLowerCase();
+    const safeOtp = String(otp).trim();
+    if (!/^\d{6}$/.test(safeOtp)) {
+        return res.status(400).json({ message: 'OTP must be a valid 6-digit number' });
+    }
     try {
-        const record = await Otp.findOne({ email, otp });
+        const record = await Otp.findOne({ email: safeEmail, otp: safeOtp });
         if (record) {
-            await Otp.deleteOne({ email }); // OTP can only be used once
+            await Otp.deleteOne({ email: safeEmail }); // OTP can only be used once
             return res.status(200).json({ message: 'OTP verified successfully' });
         } else {
             return res.status(400).json({ message: 'Invalid or expired OTP' });
@@ -100,6 +112,14 @@ exports.verifyOtp = async (req, res) => {
 exports.sendEmail = async (req, res) => {
     const { emailTemplateId, extraData = {}, job, subject, eventType: reqEventType } = req.body;
     const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
+
+    // Defense-in-depth: Never allow plaintext passwords in email payloads or outbox records
+    if (extraData && typeof extraData === 'object') {
+        delete extraData.password;
+    }
+    if (req.body && req.body.password) {
+        delete req.body.password;
+    }
     try {
         const company = await CompanyDetails.findOne();
         if (!company) {
@@ -139,12 +159,28 @@ exports.sendEmail = async (req, res) => {
             }
         }
 
-        const recipient = jobDetail ? jobDetail?.customer?.email : (extraData?.email || req.body.recipient);
+        let recipient = null;
+        if (jobDetail) {
+            recipient = jobDetail?.customer?.email;
+            if (!recipient) {
+                return res.status(400).json({ msg: 'The customer linked to this job does not have a valid email address.' });
+            }
+        } else {
+            const rawRecipient = extraData?.email || req.body.recipient;
+            if (!rawRecipient || typeof rawRecipient !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawRecipient.trim())) {
+                return res.status(400).json({ msg: 'A valid recipient email address is required.' });
+            }
+            recipient = rawRecipient.trim().toLowerCase();
+        }
+
+        const cleanSubject = typeof subject === 'string'
+            ? subject.replace(/[\r\n]+/g, ' ').trim()
+            : subject;
 
         const dispatchResult = await dispatchOutboxEmail({
             eventType,
             recipient,
-            subject,
+            subject: cleanSubject,
             emailTemplateId,
             context: {
                 company,
@@ -163,10 +199,6 @@ exports.sendEmail = async (req, res) => {
                 message: dispatchResult.message,
                 missing: dispatchResult.missing,
             });
-        }
-
-        if (job) {
-            await jobSchedule.findByIdAndUpdate(job, { status: 'Processing' });
         }
 
         return res.status(200).send(dispatchResult.emailId);
