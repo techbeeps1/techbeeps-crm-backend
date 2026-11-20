@@ -17,6 +17,7 @@ const LeaveRequest = require('../models/LeaveRequest');
 const User = require('../models/user');
 const Vehicle = require('../models/Resources/vehicle');
 const JobSchedule = require('../models/jobSchedule');
+const { formatAmsterdamTime, formatAmsterdamDate } = require('./timezoneUtil');
 
 /**
  * Helper to parse dates into consistent Date objects
@@ -32,12 +33,10 @@ function toDate(val) {
  */
 function formatTimeStr(val) {
   if (!val) return '--:--';
-  if (typeof val === 'string' && /^\d{1,2}:\d{2}/.test(val)) {
-    return val.length === 4 ? `0${val}` : val.slice(0, 5);
+  if (typeof val === 'string' && /^\d{1,2}:\d{2}/.test(val.trim())) {
+    return val.trim().length === 4 ? `0${val.trim()}` : val.trim().slice(0, 5);
   }
-  const d = toDate(val);
-  if (!d) return String(val);
-  return d.toISOString().slice(11, 16);
+  return formatAmsterdamTime(val) || '--:--';
 }
 
 /**
@@ -45,9 +44,7 @@ function formatTimeStr(val) {
  */
 function formatDateStr(val) {
   if (!val) return '---';
-  const d = toDate(val);
-  if (!d) return String(val);
-  return d.toISOString().slice(0, 10);
+  return formatAmsterdamDate(val) || '---';
 }
 
 /**

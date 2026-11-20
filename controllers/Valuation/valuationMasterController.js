@@ -152,14 +152,32 @@ exports.valuationMaster = async (req, res) => {
     }
     const resolvedPackageId = packageExists ? packageExists._id : null;
 
-    // EXEC-14: Server-side selected services reconciliation
+    // EXEC-14 & UM3-132: Server-side selected services reconciliation
     let activeServiceTypeNames = new Set();
     if (Array.isArray(services) && services.length > 0) {
       const validServiceIds = services.filter(s => s && mongoose.Types.ObjectId.isValid(s));
       if (validServiceIds.length > 0) {
-        const foundServices = await ServiceType.find({ _id: { $in: validServiceIds } }).select("serviceTypeName").lean();
-        foundServices.forEach(s => activeServiceTypeNames.add(s.serviceTypeName?.toLowerCase()?.trim()));
+        const foundServices = await ServiceType.find({ _id: { $in: validServiceIds } }).select("serviceTypeName serviceName").lean();
+        foundServices.forEach(s => {
+          if (s.serviceTypeName) activeServiceTypeNames.add(s.serviceTypeName.toLowerCase().trim());
+          if (s.serviceName) activeServiceTypeNames.add(s.serviceName.toLowerCase().trim());
+        });
       }
+      services.forEach(s => {
+        if (typeof s === 'string') activeServiceTypeNames.add(s.toLowerCase().trim());
+      });
+    }
+
+    // UM3-132: Never omit services where the user explicitly provided positive hours, rates, or crew
+    if (relocation && typeof relocation === 'object') {
+      if (Number(relocation.packing_requiredHours) > 0 || Number(relocation.packing_appliedPrice) > 0 || Number(relocation.packing_requiredPackers) > 0) activeServiceTypeNames.add('packing');
+      if (Number(relocation.unpacking_requiredHours) > 0 || Number(relocation.unpacking_appliedPrice) > 0 || Number(relocation.unpacking_requiredPackers) > 0) activeServiceTypeNames.add('unpacking');
+      if (Number(relocation.assembling_requiredHours) > 0 || Number(relocation.assembling_appliedPrice) > 0 || Number(relocation.assembling_requiredHandyman) > 0) activeServiceTypeNames.add('assembling');
+      if (Number(relocation.disassembling_requiredHours) > 0 || Number(relocation.disassembling_appliedPrice) > 0 || Number(relocation.disassembling_requiredHandyman) > 0) activeServiceTypeNames.add('disassembling');
+      if (Number(relocation.movingLift_quantity) > 0 || Number(relocation.movingLift_price) > 0) activeServiceTypeNames.add('movinglift');
+      if (Number(relocation.storage_storageVolume) > 0 || Number(relocation.storage_appliedPrice) > 0) activeServiceTypeNames.add('storage');
+      if (Number(relocation.insurance_quantity) > 0 || Number(relocation.insurance_price) > 0) activeServiceTypeNames.add('insurance');
+      if (Number(relocation.certificate_quantity) > 0 || Number(relocation.certificate_price) > 0) activeServiceTypeNames.add('certificate');
     }
 
     // 4️⃣ **Handle Offers (Array of Offers)** update or create idempotently

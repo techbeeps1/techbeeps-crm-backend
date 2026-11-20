@@ -45,7 +45,26 @@ const otpLimiter = rateLimit({
   },
 });
 
+/**
+ * Rate limiter for routing endpoints.
+ */
+const routingLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 120, // limit each IP to 120 requests per 5 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: shouldSkip,
+  handler: (req, res) => {
+    return res.status(429).json({
+      error: 'TOO_MANY_REQUESTS',
+      msg: 'Too many routing requests from this IP, please try again shortly.',
+      retryAfter: Math.ceil(5 * 60),
+    });
+  },
+});
+
 module.exports = {
   authLimiter,
   otpLimiter,
+  routingLimiter,
 };

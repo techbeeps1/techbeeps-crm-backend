@@ -204,7 +204,7 @@ server.use("/api", appSettingsRoutes);
 
 // valuation routes 
 server.use("/api", valuationRoutes);
-server.use("/api/routing", authMiddleware, routingRoutes);
+server.use("/api/routing", routingRoutes);
 //server.use('/api/icons', iconRoutes);
 
 server.use("/api", documentTemplateRoutes);

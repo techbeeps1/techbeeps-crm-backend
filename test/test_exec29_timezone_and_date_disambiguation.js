@@ -21,6 +21,7 @@ const { formatDutchDate, formatDutchTime } = require('../utils/dutchLocaleUtil')
 const Invoice = require('../models/invoice');
 const Finance = require('../models/finance');
 const Appointment = require('../models/appointmentModel');
+const User = require('../models/user');
 
 const BASE_URL = 'http://localhost:8080';
 let adminToken = '';
@@ -47,9 +48,11 @@ async function runTests() {
 
   try {
     await mongoose.connect(process.env.MONGO_URI);
+    const adminUser = await User.findOne({ role: 'Admin', isActive: { $ne: false } }).lean();
+    const adminUserId = adminUser ? adminUser._id : '67c05a32a7cf083dc7f2fbd6';
     adminToken = jwt.sign(
-      { id: '654321654321654321654321', role: 'Admin', name: 'Admin Lead' },
-      process.env.JWT_SECRET
+      { id: adminUserId, _id: adminUserId, role: 'Admin', name: 'Admin Lead' },
+      process.env.JWT_SECRET || 'abcdefghijklmnopqrstuvwxyz'
     );
 
     // -------------------------------------------------------------------------

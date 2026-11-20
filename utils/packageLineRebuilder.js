@@ -86,11 +86,22 @@ function generateTargetLines(options = {}) {
     defaultSalesGroup = '',
   } = options;
 
-  const isServiceActive = (typeName) => {
-    if (!Array.isArray(selectedServices)) return true;
+  // EXEC-14 & UM3-132: Check active status without dropping positive hours, prices or crew
+  const isServiceActive = (typeName, explicitServiceObj) => {
+    if (explicitServiceObj) {
+      const reqHours = parseTimeToHours(explicitServiceObj.requiredHours);
+      const appliedPrice = Number(explicitServiceObj.appliedPrice || explicitServiceObj.price || 0);
+      const qty = Number(explicitServiceObj.quantity || explicitServiceObj.storageVolume || 0);
+      if ((reqHours > 0 && appliedPrice > 0) || (qty > 0 && appliedPrice > 0)) {
+        return true;
+      }
+    }
+    if (!Array.isArray(selectedServices) || selectedServices.length === 0) return true;
     return selectedServices.some(s => {
-      const st = s?.serviceTypeName || s?.serviceName || '';
-      return st.toLowerCase() === typeName.toLowerCase();
+      if (!s) return false;
+      if (typeof s === 'string') return s.toLowerCase() === typeName.toLowerCase();
+      const st = s?.serviceTypeName || s?.serviceName || s?.name || s?.type || '';
+      return st.toLowerCase() === typeName.toLowerCase() || String(s._id || s.id || '').toLowerCase() === typeName.toLowerCase();
     });
   };
 
@@ -265,7 +276,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 6. Packing Service
-  if (!isCoveredByPackage(['packing service', 'inpakken']) && isServiceActive('packing')) {
+  if (!isCoveredByPackage(['packing service', 'inpakken']) && isServiceActive('packing', packing)) {
     const packingHrs = parseTimeToHours(packing?.requiredHours);
     const packingRate = Number(packing?.appliedPrice) || 0;
     if (packingHrs > 0 && packingRate > 0) {
@@ -282,7 +293,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 7. Unpacking Service
-  if (!isCoveredByPackage(['unpacking service', 'uitpakken']) && isServiceActive('unpacking')) {
+  if (!isCoveredByPackage(['unpacking service', 'uitpakken']) && isServiceActive('unpacking', unpacking)) {
     const unpackingHrs = parseTimeToHours(unpacking?.requiredHours);
     const unpackingRate = Number(unpacking?.appliedPrice) || 0;
     if (unpackingHrs > 0 && unpackingRate > 0) {
@@ -299,7 +310,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 8. Furniture Assembly Service
-  if (!isCoveredByPackage(['furniture assembly', 'monteren', 'montage']) && isServiceActive('assembling')) {
+  if (!isCoveredByPackage(['furniture assembly', 'monteren', 'montage']) && isServiceActive('assembling', assembling)) {
     const assembleHrs = parseTimeToHours(assembling?.requiredHours);
     const assembleRate = Number(assembling?.appliedPrice) || 0;
     if (assembleHrs > 0 && assembleRate > 0) {
@@ -316,7 +327,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 9. Furniture Disassembly Service (EXEC-16: Never suppress disassembly!)
-  if (!isCoveredByPackage(['furniture disassembly', 'demonteren', 'demontage']) && isServiceActive('disassembling')) {
+  if (!isCoveredByPackage(['furniture disassembly', 'demonteren', 'demontage']) && isServiceActive('disassembling', disassembling)) {
     const disHrs = parseTimeToHours(disassembling?.requiredHours);
     const disRate = Number(disassembling?.appliedPrice) || 0;
     if (disHrs > 0 && disRate > 0) {
@@ -333,7 +344,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 10. Moving Lift
-  if (!isCoveredByPackage(['moving lift', 'verhuislift', 'ladderlift']) && isServiceActive('movingLift')) {
+  if (!isCoveredByPackage(['moving lift', 'verhuislift', 'ladderlift']) && isServiceActive('movingLift', movingLift)) {
     const liftQty = Number(movingLift?.quantity) || 0;
     const liftPrice = Number(movingLift?.price) || Number(movingLift?.appliedPrice) || 0;
     if (liftQty > 0 && liftPrice > 0) {
@@ -350,7 +361,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 11. Storage Service
-  if (!isCoveredByPackage(['storage', 'opslag']) && isServiceActive('storage')) {
+  if (!isCoveredByPackage(['storage', 'opslag']) && isServiceActive('storage', storage)) {
     const sQty = Number(storage?.storageVolume) || Number(storage?.quantity) || 0;
     const sPrice = Number(storage?.appliedPrice) || Number(storage?.price) || 0;
     if (sQty > 0 && sPrice > 0) {
@@ -367,7 +378,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 12. Insurance Coverage
-  if (!isCoveredByPackage(['insurance', 'verzekering']) && isServiceActive('insurance')) {
+  if (!isCoveredByPackage(['insurance', 'verzekering']) && isServiceActive('insurance', insurance)) {
     const insQty = Number(insurance?.quantity) || 0;
     const insPrice = Number(insurance?.price) || Number(insurance?.appliedPrice) || 0;
     if (insQty > 0 && insPrice > 0) {
@@ -384,7 +395,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 13. Certificate Service
-  if (!isCoveredByPackage(['certificate', 'garantie']) && isServiceActive('certificate')) {
+  if (!isCoveredByPackage(['certificate', 'garantie']) && isServiceActive('certificate', certificate)) {
     const certQty = Number(certificate?.quantity) || 0;
     const certPrice = Number(certificate?.price) || Number(certificate?.appliedPrice) || 0;
     if (certQty > 0 && certPrice > 0) {
@@ -401,7 +412,7 @@ function generateTargetLines(options = {}) {
   }
 
   // 14. Moving Packages
-  if (isServiceActive('movingPackage')) {
+  if (isServiceActive('movingPackage', movingPackages)) {
     const mpQty = Number(movingPackages?.quantity) || 0;
     const mpPrice = Number(movingPackages?.price) || Number(movingPackages?.appliedPrice) || 0;
     if (mpQty > 0 && mpPrice > 0) {

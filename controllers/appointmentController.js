@@ -4,6 +4,25 @@ const JobSchedule = require('../models/jobSchedule');
 const Company = require('../models/companyModel');
 const { checkResourceConflicts } = require('../utils/resourceConflictEngine');
 const { dispatchOutboxEmail, EMAIL_EVENTS } = require('../utils/emailOutboxService');
+const { toAmsterdamUtcInstant, normalizeDateOnly } = require('../utils/timezoneUtil');
+
+/**
+ * Normalizes input time into authoritative Europe/Amsterdam UTC Date instant
+ */
+function toCanonicalUtcDate(dateVal, timeVal) {
+  if (!timeVal) return null;
+  if (timeVal instanceof Date && !isNaN(timeVal.getTime())) return timeVal;
+  if (typeof timeVal === 'string') {
+    const trimmed = timeVal.trim();
+    if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+      const baseDate = dateVal ? normalizeDateOnly(dateVal) : new Date().toISOString().slice(0, 10);
+      return toAmsterdamUtcInstant(baseDate, trimmed);
+    }
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return timeVal;
+}
 
 /**
  * Pre-flight Conflict Check Endpoint
@@ -145,8 +164,8 @@ exports.createAppointment = async (req, res) => {
         employeeId: emp.employeeId,
         employeeName: emp.employeeName,
         workType: emp.workType,
-        startTime: emp.startTime,
-        endTime: emp.endTime,
+        startTime: toCanonicalUtcDate(date, emp.startTime),
+        endTime: toCanonicalUtcDate(date, emp.endTime),
         vehicle: emp.vehicle || null,
       }));
       const savedEmployability = await Employability.insertMany(employabilityRecords);
@@ -158,8 +177,8 @@ exports.createAppointment = async (req, res) => {
     const appointmentData = {
       jobId: jobId || null,
       date,
-      startTime,
-      endTime,
+      startTime: toCanonicalUtcDate(date, startTime),
+      endTime: toCanonicalUtcDate(date, endTime),
       appointmentType: appointmentType || 'Move',
       workLocation,
       departureLocation,
@@ -464,13 +483,14 @@ exports.updateAppointment = async (req, res) => {
     }
 
     let savedIds = [];
+    const effectiveDate = date || appointment.date;
     if (employeesList.length > 0) {
       const employabilityRecords = employeesList.map((emp) => ({
         employeeId: emp.employeeId,
         employeeName: emp.employeeName,
         workType: emp.workType,
-        startTime: emp.startTime,
-        endTime: emp.endTime,
+        startTime: toCanonicalUtcDate(effectiveDate, emp.startTime),
+        endTime: toCanonicalUtcDate(effectiveDate, emp.endTime),
         vehicle: emp.vehicle || null,
       }));
 
@@ -481,8 +501,8 @@ exports.updateAppointment = async (req, res) => {
     // 4. Update appointment fields
     if (jobId !== undefined) appointment.jobId = jobId;
     if (date !== undefined) appointment.date = date;
-    if (startTime !== undefined) appointment.startTime = startTime;
-    if (endTime !== undefined) appointment.endTime = endTime;
+    if (startTime !== undefined) appointment.startTime = toCanonicalUtcDate(effectiveDate, startTime);
+    if (endTime !== undefined) appointment.endTime = toCanonicalUtcDate(effectiveDate, endTime);
     if (appointmentType !== undefined) appointment.appointmentType = appointmentType;
     if (workLocation !== undefined) appointment.workLocation = workLocation;
     if (departureLocation !== undefined) appointment.departureLocation = departureLocation;
