@@ -84,7 +84,7 @@ async function runVerification() {
     // -------------------------------------------------------------------------
     console.log('\n--- Section 4: Unhandled Exception Safety ---');
 
-    const rawSensitiveErr = new Error('Failed to connect to mongodb+srv://muskan30092000:PASSWORD@cluster0.sneqypv.mongodb.net/CRMatlas');
+    const rawSensitiveErr = new Error('Failed to connect to database://dummy-user:dummy-pass@dummy-host:27017/dummy-db');
     rawSensitiveErr.stack = 'Error: at QueryReqWrap.onresolve (/var/task/node_modules/mongodb/index.js:140)';
 
     const sanitizedSensitive = sanitizeDatabaseError(rawSensitiveErr);
@@ -92,9 +92,9 @@ async function runVerification() {
     assert(sanitizedSensitive.statusCode === 500, 'Test 4.1: Returns HTTP 500 for unhandled exceptions');
     assert(sanitizedSensitive.error === 'INTERNAL_SERVER_ERROR', 'Test 4.2: Standard error code INTERNAL_SERVER_ERROR returned');
     assert(
-      !sanitizedSensitive.message.includes('mongodb+srv') &&
-      !sanitizedSensitive.message.includes('muskan30092000') &&
-      !sanitizedSensitive.message.includes('cluster0'),
+      !sanitizedSensitive.message.includes('dummy-user') &&
+      !sanitizedSensitive.message.includes('dummy-pass') &&
+      !sanitizedSensitive.message.includes('dummy-host'),
       'Test 4.3: Database credentials and connection strings strictly hidden from response'
     );
 
@@ -117,7 +117,7 @@ async function runVerification() {
     });
 
     app.get('/trigger-crash', (req, res, next) => {
-      next(new Error('Internal driver timeout to cluster0.sneqypv.mongodb.net'));
+      next(new Error('Internal driver timeout to dummy-internal-host.local'));
     });
 
     app.use(errorMiddleware);
@@ -129,7 +129,7 @@ async function runVerification() {
 
     const crashRes = await request(app).get('/trigger-crash');
     assert(crashRes.status === 500, 'Test 5.4: Pipeline maps crash to safe HTTP 500');
-    assert(!crashRes.body.message.includes('cluster0'), 'Test 5.5: Database hostnames hidden in pipeline response');
+    assert(!crashRes.body.message.includes('dummy-internal-host'), 'Test 5.5: Database hostnames hidden in pipeline response');
 
   } catch (err) {
     console.error('Error during test execution:', err);
