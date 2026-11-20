@@ -49,7 +49,7 @@ async function runExec16Tests() {
   console.log('=====================================================================\n');
 
   let passedTests = 0;
-  const totalTests = 7;
+  const totalTests = 8;
 
   try {
     // -------------------------------------------------------------------------
@@ -324,6 +324,63 @@ async function runExec16Tests() {
       throw new Error(`PDF download failed with status ${pdfRes.status}`);
     }
     console.log(`  ✓ Invoice #2026/0025 PDF download route returned 200 OK (${pdfRes.data.length} bytes valid PDF)`);
+    passedTests++;
+
+    // -------------------------------------------------------------------------
+    // TEST 8: Task 23 [UM3-020] Intake Price Components Preserved Alongside Package Rules
+    // -------------------------------------------------------------------------
+    console.log('\n[Test 8] Task 23 [UM3-020]: Intake Price Components Preserved Alongside Package Rules:');
+    const combinedLines = generateTargetLines({
+      packageData: pkgA,
+      priceAgree: 'fixed_price',
+      relocation: {
+        propertySurcharge: 50,
+      },
+      rooms: [
+        {
+          name: 'Master Bedroom',
+          inventoryItems: [
+            { _id: 'box_standard', name: 'Standard Moving Box', quantity: 20, price: 5 }
+          ]
+        }
+      ],
+      packing: { requiredHours: 2, appliedPrice: 45 },
+      assembling: { requiredHours: 1, appliedPrice: 40 },
+      selectedServices: [
+        { serviceTypeName: 'packing' },
+        { serviceTypeName: 'assembling' },
+      ],
+    });
+
+    if (combinedLines.length !== 6) {
+      throw new Error(`Expected 6 combined lines (2 package rules + 4 intake components), got ${combinedLines.length}: ${combinedLines.map(l => l.componentId).join(', ')}`);
+    }
+
+    const hasPkgRule0 = combinedLines.some(l => l.componentId.includes('pkg_rule') && l.price === 500);
+    const hasPkgRule1 = combinedLines.some(l => l.componentId.includes('pkg_rule') && l.price === 150);
+    const hasSurchargeLine = combinedLines.some(l => l.componentId === 'relocation_property_surcharge' && l.price === 50);
+    const hasBoxLine = combinedLines.some(l => l.componentId === 'inventory_box_box_standard' && l.quantity === 20 && l.price === 5);
+    const hasPackingLine = combinedLines.some(l => l.componentId === 'service_packing' && l.quantity === 2 && l.price === 45);
+    const hasAssemblyLine = combinedLines.some(l => l.componentId === 'service_assembling' && l.quantity === 1 && l.price === 40);
+
+    if (!hasPkgRule0 || !hasPkgRule1 || !hasSurchargeLine || !hasBoxLine || !hasPackingLine || !hasAssemblyLine) {
+      throw new Error('Critical: Intake calculated components were overwritten or dropped when package was selected!');
+    }
+
+    const combinedCalc = calculateCommercialTotals({
+      items: combinedLines,
+      vat: 'exclusive',
+      discount: 0,
+    });
+
+    // 500 + 150 + 50 + 100 + 90 + 40 = 930
+    if (combinedCalc.subTotal !== 930) {
+      throw new Error(`Combined subtotal mismatch: expected €930.00, got €${combinedCalc.subTotal}`);
+    }
+
+    console.log('  ✓ Package rules (Core Moving €500 + Protection €150) preserved.');
+    console.log('  ✓ Valuation intake calculated components (Surcharge €50 + Boxes €100 + Packing €90 + Assembly €40) preserved.');
+    console.log(`  ✓ Subtotal: €${combinedCalc.subTotal.toFixed(2)} (Zero estimate overwrite / zero component drop verified).`);
     passedTests++;
 
     console.log('\n=====================================================================');

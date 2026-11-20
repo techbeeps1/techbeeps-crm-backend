@@ -198,15 +198,16 @@ server.get("/health", (req, res) => {
 });
 
 // valuation routes 
+// setting routes (public company details and settings)
+server.use("/api", companyRoutes);
+server.use("/api", appSettingsRoutes);
+
+// valuation routes 
 server.use("/api", valuationRoutes);
 server.use("/api/routing", authMiddleware, routingRoutes);
 //server.use('/api/icons', iconRoutes);
 
 server.use("/api", documentTemplateRoutes);
-
-// setting routes
-server.use("/api", companyRoutes)
-server.use("/api", appSettingsRoutes);
 
 server.use("/api/task", authMiddleware, taskRoutes);
 

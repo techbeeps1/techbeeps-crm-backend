@@ -8,7 +8,7 @@ const roomTypeController = require('../../controllers/Valuation/roomTypeControll
 const valuationMasterController = require('../../controllers/Valuation/valuationMasterController');
 
 // All valuation & catalog routes require authentication
-router.use(authMiddleware);
+router.use(['/services', '/furniture', '/room', '/valuation'], authMiddleware);
 
 // For service type
 router.get('/services/', serviceTypeController.getAllServiceTypes);
