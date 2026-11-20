@@ -7,7 +7,15 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
 
+const helmet = require('helmet');
+
 const server = express();
+
+// Security HTTP Headers via Helmet (Task 17 [UM3-032])
+server.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false,
+}));
 
 const expressWs = require("express-ws");
 
@@ -308,24 +316,9 @@ server.use((req, res, next) => {
   });
 });
 
-// EXEC-09: Centralized Safe Error Middleware (Prevents raw stack and DB query leakage)
-server.use((err, req, res, next) => {
-  const correlationId = req.correlationId || req.headers['x-correlation-id'] || null;
-  console.error(`[EXEC-09 SafeError] [CorrelationId: ${correlationId}]`, err);
-
-  const statusCode = err.statusCode || err.status || (err.name === 'ValidationError' ? 400 : 500);
-  const safeMessage = (statusCode < 500 || err.name === 'ValidationError')
-    ? err.message
-    : (process.env.NODE_ENV === 'production'
-        ? 'An unexpected error occurred. Please contact support with your correlation ID.'
-        : err.message || 'Internal server error');
-
-  res.status(statusCode).json({
-    error: err.name || 'INTERNAL_ERROR',
-    message: safeMessage,
-    correlationId,
-  });
-});
+// Task 19 [UM3-076]: Centralized Safe Error Middleware (Strips raw database errors & stack traces)
+const { errorMiddleware } = require("./middlewares/errorMiddleware");
+server.use(errorMiddleware);
 
 async function startServer() {
   try {

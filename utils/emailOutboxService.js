@@ -392,7 +392,26 @@ async function dispatchOutboxEmail(options = {}) {
     forceSink = false,
   } = options;
 
-  const recipient = (rawRecipient || context.recipient || context.customer?.email || context.extraData?.email || '').trim();
+  let recipient = (rawRecipient || context.recipient || context.customer?.email || context.extraData?.email || '').trim();
+
+  // Defense-in-depth for QUOTE_ACCEPTED (UM3-025):
+  // Strictly enforce that quote acceptance confirmation emails are delivered to the verified customer of record,
+  // preventing malicious recipient redirection via unverified user payloads.
+  if (eventType === EMAIL_EVENTS.QUOTE_ACCEPTED) {
+    const verifiedCustomerEmail = (
+      context.customer?.email ||
+      context.invoice?.customer?.email ||
+      (context.invoice?.customerSnapshot?.email) ||
+      ''
+    ).trim();
+
+    if (verifiedCustomerEmail && isValidEmail(verifiedCustomerEmail)) {
+      if (recipient.toLowerCase() !== verifiedCustomerEmail.toLowerCase()) {
+        console.warn(`[Security UM3-025] QUOTE_ACCEPTED recipient redirect attempt blocked: requested "${recipient}", overriding to verified customer email "${verifiedCustomerEmail}".`);
+        recipient = verifiedCustomerEmail;
+      }
+    }
+  }
 
   // 1. Pre-send Variable Validation
   const validationResult = validateEventVariables(eventType, { ...context, recipient });
@@ -609,6 +628,7 @@ async function dispatchOutboxEmail(options = {}) {
       eventType,
       from: fromHeader,
       to: recipient,
+      recipient: recipient,
       subject: finalSubject,
       html: renderedHtml,
       attachments,

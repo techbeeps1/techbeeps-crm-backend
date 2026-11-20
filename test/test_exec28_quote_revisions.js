@@ -54,14 +54,36 @@ async function setupFixtures() {
 
   await cleanupOldTests();
 
+  const User = require('../models/user');
+  let testAdminUser = await User.findOne({ email: 'admin.exec28@universalmovers.nl' });
+  if (!testAdminUser) {
+    testAdminUser = await User.create({
+      name: 'Admin User',
+      email: 'admin.exec28@universalmovers.nl',
+      role: 'Admin',
+      isActive: true,
+      password: 'TestPassword123!',
+    });
+  }
+  let testStaffUser = await User.findOne({ email: 'estimator.exec28@universalmovers.nl' });
+  if (!testStaffUser) {
+    testStaffUser = await User.create({
+      name: 'Staff Estimator',
+      email: 'estimator.exec28@universalmovers.nl',
+      role: 'Staff',
+      isActive: true,
+      password: 'TestPassword123!',
+    });
+  }
+
   const jwtSecret = process.env.JWT_SECRET || 'fallback_secret';
   adminToken = jwt.sign(
-    { _id: new mongoose.Types.ObjectId(), name: 'Admin User', email: 'admin@universalmovers.nl', role: 'Admin' },
+    { _id: testAdminUser._id, id: testAdminUser._id, name: testAdminUser.name, email: testAdminUser.email, role: 'Admin' },
     jwtSecret,
     { expiresIn: '2h' }
   );
   staffToken = jwt.sign(
-    { _id: new mongoose.Types.ObjectId(), name: 'Staff Estimator', email: 'estimator@universalmovers.nl', role: 'Staff' },
+    { _id: testStaffUser._id, id: testStaffUser._id, name: testStaffUser.name, email: testStaffUser.email, role: 'Staff' },
     jwtSecret,
     { expiresIn: '2h' }
   );
@@ -151,7 +173,7 @@ async function runTests() {
     await Finance.findByIdAndUpdate(quoteV1._id, { Status: 'Sent' });
 
     const acceptRes = await axios.post(
-      `${BASE_URL}/finance/accept/${quoteV1._id}`,
+      `${BASE_URL}/finance/accept/${quoteV1.capabilityToken || quoteV1._id}`,
       {
         name: 'Klaas Vermeulen',
         email: 'revision.test@universalmovers.nl',
@@ -310,12 +332,13 @@ async function runTests() {
     const rejectQuoteDoc = await Finance.create({
       customer: testCustomer._id,
       Status: 'Sent',
+      capabilityToken: crypto.randomBytes(24).toString('hex'),
       vat: 'exclusive',
       items: [{ description: 'Storage Service', quantity: 1, price: 200, btw: '21' }],
     });
     createdFinanceIds.push(rejectQuoteDoc._id);
 
-    const rejectRes = await axios.post(`${BASE_URL}/finance/reject/${rejectQuoteDoc._id}`, {
+    const rejectRes = await axios.post(`${BASE_URL}/finance/reject/${rejectQuoteDoc.capabilityToken}`, {
       reason: 'Customer found alternative service provider',
     });
     assert(rejectRes.status === 200, `Rejection endpoint returns 200 OK`);
@@ -330,7 +353,7 @@ async function runTests() {
 
     // Attempt to accept rejected quote must be blocked
     try {
-      await axios.post(`${BASE_URL}/finance/accept/${rejectQuoteDoc._id}`, {
+      await axios.post(`${BASE_URL}/finance/accept/${rejectQuoteDoc.capabilityToken || rejectQuoteDoc._id}`, {
         name: 'Klaas Vermeulen',
         email: 'revision.test@universalmovers.nl',
       });

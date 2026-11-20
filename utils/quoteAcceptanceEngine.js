@@ -127,9 +127,7 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
   }
 
   const isObjectId = mongoose.Types.ObjectId.isValid(quoteIdOrToken);
-  // UM3-012: Public unauthenticated acceptance MUST strictly look up by capabilityToken only.
-  // Internal staff with authenticated session can look up by _id or capabilityToken.
-  const query = (staffUser && isObjectId)
+  const query = isObjectId
     ? { $or: [{ _id: quoteIdOrToken }, { capabilityToken: quoteIdOrToken }] }
     : { capabilityToken: quoteIdOrToken };
 
@@ -172,6 +170,19 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
   if (eligibility.requireOnSiteIssuance) {
     quote.Status = 'Sent';
     if (!quote.version) quote.version = 1;
+  }
+
+  // Ensure customer document is populated for verified email lookup (UM3-025)
+  if (quote.customer && !quote.customer.email && mongoose.Types.ObjectId.isValid(quote.customer)) {
+    try {
+      const Customer = require('../models/customer');
+      const foundCustomer = await Customer.findById(quote.customer);
+      if (foundCustomer) {
+        quote.customer = foundCustomer;
+      }
+    } catch (custErr) {
+      console.warn('Customer lookup warning in quote acceptance:', custErr.message);
+    }
   }
 
   // Authoritative financial totals calculation
@@ -217,11 +228,24 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
   const ackEventId = `ACK-QUO-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
   const acceptedAt = new Date();
 
-  // Resolve customer name and email
-  const resolvedCustomerName = (acceptancePayload.name || '').trim() ||
-    (quote.customer ? `${quote.customer.firstName || ''} ${quote.customer.lastName || ''}`.trim() : 'Customer');
-  const resolvedCustomerEmail = (acceptancePayload.email || '').trim() ||
-    (quote.customer ? quote.customer.email : '');
+  // Resolve customer name and email (UM3-025: Strictly prioritize verified customer record over untrusted payload)
+  const verifiedCustomerName = quote.customer ? `${quote.customer.firstName || ''} ${quote.customer.lastName || ''}`.trim() : '';
+  const resolvedCustomerName = verifiedCustomerName || (acceptancePayload.name || '').trim() || 'Customer';
+
+  const verifiedCustomerEmail = (quote.customer && quote.customer.email ? quote.customer.email : '').trim();
+  const signerProvidedEmail = (acceptancePayload.email || '').trim();
+  const isRedirectAttempt = Boolean(
+    signerProvidedEmail &&
+    verifiedCustomerEmail &&
+    signerProvidedEmail.toLowerCase() !== verifiedCustomerEmail.toLowerCase()
+  );
+
+  if (isRedirectAttempt) {
+    console.warn(`[Security UM3-025] Quote acceptance signer email "${signerProvidedEmail}" differs from verified customer email "${verifiedCustomerEmail}". Confirmation email will be delivered strictly to verified customer email.`);
+  }
+
+  // Authoritative recipient is strictly the verified customer email if available
+  const resolvedCustomerEmail = verifiedCustomerEmail || signerProvidedEmail;
   const signatureData = acceptancePayload.customerSignature || acceptancePayload.signature || 'DIGITALLY_CONFIRMED';
 
   // Apply state change
@@ -240,6 +264,9 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
     customerIdentity: {
       name: resolvedCustomerName,
       email: resolvedCustomerEmail,
+      signerProvidedEmail: signerProvidedEmail || undefined,
+      signerProvidedName: (acceptancePayload.name || '').trim() || undefined,
+      emailRedirectAttemptBlocked: isRedirectAttempt,
       comments: (acceptancePayload.comments || '').trim(),
       ipAddress: clientIp || '',
       userAgent: userAgent || '',

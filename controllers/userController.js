@@ -127,6 +127,9 @@ const loginUser = async (req, res) => {
     if (user.isActive === false || user.isRestricted === true) {
       return res.status(403).json({ msg: "This account has been deactivated or restricted by administrator." });
     }
+    if (user.outofservice && new Date(user.outofservice) <= new Date()) {
+      return res.status(403).json({ msg: "This employee account is out of service." });
+    }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ msg: "Invalid Credentials" });
@@ -154,10 +157,11 @@ const loginUser = async (req, res) => {
       console.error('[loginUser] FATAL: JWT_SECRET environment variable is missing.');
       return res.status(500).json({ msg: "Server authentication configuration error." });
     }
+    const tokenExpiresIn = process.env.JWT_EXPIRES_IN || "24h";
     jwt.sign(
       payload,
       jwtSecret,
-      { expiresIn: "100h" },
+      { expiresIn: tokenExpiresIn },
       (err, token) => {
         if (err) {
           console.error('[loginUser jwt.sign error]', err);

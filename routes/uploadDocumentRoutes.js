@@ -63,40 +63,38 @@ router.post("/uploadDocument", handleMulterUpload, async (req, res) => {
       });
     }
 
-   const fileName = `documents/${Date.now()}-${req.file.originalname}`;
+    const fileName = `documents/${Date.now()}-${req.file.originalname}`;
 
-const uploadFile = new Upload({
-  client: s3Client,
-  params: {
-    Bucket: process.env.R2_BUCKET_NAME,
-    Key: fileName,
-    Body: req.file.buffer,
-    ContentType: req.file.mimetype,
-  },
-});
+    const uploadFile = new Upload({
+      client: s3Client,
+      params: {
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: fileName,
+        Body: req.file.buffer,
+        ContentType: req.file.mimetype,
+      },
+    });
 
-      const result = await uploadFile.done();
+    const result = await uploadFile.done();
 
     let document = new Document();
     if (req.body.customer) {
       document.customer = req.body.customer; // Mongoose will cast it if it's a valid ID
     }
     if (req.body.email && req.body.isEmployee) {
-      document.email = req.body.email; 
+      document.email = req.body.email;
       document.isEmployee = req.body.isEmployee;
     }
-    const fileUrl = `${process.env.R2_PUBLIC_URL}/${result.Key}`;
-
-    document.path = fileUrl; // URL or S3 URI
-    document.name = result.Key; // S3 object key (file name in bucket)
+    // UM3-037: Store private object key rather than leaking raw public URLs
+    document.path = result.Key;
+    document.name = result.Key;
     document.fileName = req.body.fileName;
     document.documentType = req.body.documentType;
 
     const data = await document.save();
-    // Save result.Location or result.Key to DB if needed
     return res.status(200).json({
       status: true,
-      msg: "File uploaded to S3 successfully",
+      msg: "File uploaded to private storage successfully",
       data: result,
     });
   } catch (err) {
@@ -109,6 +107,7 @@ const uploadFile = new Upload({
 });
 
 router.get("/documentList", uploadDocumentController.documentList);
+router.get("/document/presigned/:id", uploadDocumentController.getPresignedUrl);
 router.delete("/documents/:id", uploadDocumentController.deleteDocument);
 router.get("/document/:filename", uploadDocumentController.downloadFile);
 

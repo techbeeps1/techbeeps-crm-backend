@@ -21,13 +21,23 @@ const authMiddleware = async (req, res, next) => {
 
     if (targetUserId) {
       try {
-        const userDoc = await User.findById(targetUserId).select('isActive isRestricted');
-        if (userDoc && (userDoc.isActive === false || userDoc.isRestricted === true)) {
+        const userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
+        if (!userDoc) {
+          return res.status(401).json({ msg: 'User account not found or removed.' });
+        }
+        if (userDoc.isActive === false || userDoc.isRestricted === true) {
           return res.status(403).json({ msg: 'This account has been deactivated or restricted by administrator.' });
         }
+        if (userDoc.outofservice && new Date(userDoc.outofservice) <= new Date()) {
+          return res.status(403).json({ msg: 'This employee account is out of service.' });
+        }
       } catch (err) {
-        // Gracefully ignore transient DB lookup errors
+        if (err.name === 'CastError') {
+          return res.status(401).json({ msg: 'Invalid user identifier in token' });
+        }
       }
+    } else {
+      return res.status(401).json({ msg: 'Token does not contain valid user information' });
     }
 
     req.user = {
@@ -63,13 +73,23 @@ const optionalAuthMiddleware = async (req, res, next) => {
 
     if (targetUserId) {
       try {
-        const userDoc = await User.findById(targetUserId).select('isActive isRestricted');
-        if (userDoc && (userDoc.isActive === false || userDoc.isRestricted === true)) {
+        const userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
+        if (!userDoc) {
+          return res.status(401).json({ msg: 'User account not found or removed.' });
+        }
+        if (userDoc.isActive === false || userDoc.isRestricted === true) {
           return res.status(403).json({ msg: 'This account has been deactivated or restricted by administrator.' });
         }
+        if (userDoc.outofservice && new Date(userDoc.outofservice) <= new Date()) {
+          return res.status(403).json({ msg: 'This employee account is out of service.' });
+        }
       } catch (err) {
-        // Gracefully ignore transient DB lookup errors
+        if (err.name === 'CastError') {
+          return res.status(401).json({ msg: 'Invalid user identifier in token' });
+        }
       }
+    } else {
+      return res.status(401).json({ msg: 'Token does not contain valid user information' });
     }
 
     req.user = {

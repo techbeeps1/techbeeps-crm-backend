@@ -100,6 +100,9 @@ const financeSchema = new mongoose.Schema({
     customerIdentity: {
       name: { type: String },
       email: { type: String },
+      signerProvidedEmail: { type: String },
+      signerProvidedName: { type: String },
+      emailRedirectAttemptBlocked: { type: Boolean, default: false },
       comments: { type: String },
       ipAddress: { type: String },
       userAgent: { type: String },

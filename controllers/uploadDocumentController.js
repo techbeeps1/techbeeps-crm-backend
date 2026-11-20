@@ -2,19 +2,18 @@ const Document = require("../models/document");
 const { S3Client, GetObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
-// Cloudflare R2 Client
+// Cloudflare R2 Client (Private Bucket configuration)
 const s3Client = new S3Client({
   region: "auto",
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  endpoint: process.env.R2_ACCOUNT_ID ? `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined,
   forcePathStyle: true,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID.trim(),
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY.trim(),
+    accessKeyId: (process.env.R2_ACCESS_KEY_ID || '').trim(),
+    secretAccessKey: (process.env.R2_SECRET_ACCESS_KEY || '').trim(),
   },
 });
 
-
-// Upload Document
+// Upload Document (Store private key rather than leaking raw public URLs)
 exports.uploadDocument = async (req, res) => {
   try {
     if (!req.file) {
@@ -36,10 +35,8 @@ exports.uploadDocument = async (req, res) => {
       document.isEmployee = req.body.isEmployee;
     }
 
-    // Public file path from R2
-    document.path = `${process.env.R2_PUBLIC_URL}/${req.file.key}`;
-
-    // File key stored in DB
+    // UM3-037: Store private object key, avoiding raw public bucket exposure
+    document.path = req.file.key;
     document.name = req.file.key;
 
     document.fileName = req.body.fileName;
@@ -49,7 +46,7 @@ exports.uploadDocument = async (req, res) => {
 
     return res.status(200).json({
       status: true,
-      msg: "File uploaded successfully",
+      msg: "File uploaded successfully (secured private storage)",
       data,
     });
 
@@ -65,7 +62,7 @@ exports.uploadDocument = async (req, res) => {
 };
 
 
-// Document List
+// Document List with Presigned URLs for authenticated private access (UM3-037)
 exports.documentList = async (req, res) => {
   try {
     const { customer, email, isEmployee } = req.query;
@@ -74,7 +71,33 @@ exports.documentList = async (req, res) => {
       ? { customer }
       : { email, isEmployee };
 
-    const documentList = await Document.find(filter);
+    const rawDocs = await Document.find(filter).lean();
+
+    const expiresIn = parseInt(process.env.R2_PRESIGNED_EXPIRES_IN, 10) || 900; // 15 mins default
+    const isR2Configured = Boolean(process.env.R2_BUCKET_NAME && process.env.R2_ACCESS_KEY_ID);
+
+    const documentList = await Promise.all(
+      rawDocs.map(async (doc) => {
+        const key = doc.name || (doc.path && !doc.path.startsWith('http') ? doc.path : (doc.path ? doc.path.split('/').pop() : null));
+        let presignedUrl = null;
+        if (key && isR2Configured) {
+          try {
+            const command = new GetObjectCommand({
+              Bucket: process.env.R2_BUCKET_NAME,
+              Key: key,
+            });
+            presignedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+          } catch (e) {
+            // Ignore signing error for individual document
+          }
+        }
+        return {
+          ...doc,
+          presignedUrl: presignedUrl || doc.path,
+          isPrivate: true,
+        };
+      })
+    );
 
     res.json({
       documentList,
@@ -85,6 +108,44 @@ exports.documentList = async (req, res) => {
 
     res.status(500).json({
       message: "Server error",
+    });
+  }
+};
+
+// Generates an on-demand presigned URL for an authenticated document request (UM3-037)
+exports.getPresignedUrl = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({ message: "Document not found" });
+    }
+
+    const key = document.name || (document.path && !document.path.startsWith('http') ? document.path : (document.path ? document.path.split('/').pop() : null));
+    if (!key) {
+      return res.status(404).json({ message: "Document storage key not found" });
+    }
+
+    const expiresIn = parseInt(process.env.R2_PRESIGNED_EXPIRES_IN, 10) || 900;
+    const command = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+    });
+
+    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+
+    return res.status(200).json({
+      status: true,
+      presignedUrl,
+      expiresIn,
+      fileName: document.fileName,
+      documentType: document.documentType,
+    });
+  } catch (error) {
+    console.error("Error generating presigned URL:", error);
+    return res.status(500).json({
+      message: "Error generating presigned URL",
+      error: error.message,
     });
   }
 };

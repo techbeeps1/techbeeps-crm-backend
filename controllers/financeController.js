@@ -114,7 +114,39 @@ exports.finance = async (req, res) => {
         throw saveError;
       }
     }
-    res.json(financeData);
+
+    // Email notification dispatch on quote submission
+    const shouldSendEmail =
+      req.body.sendEmail === true ||
+      sanitizedBody.sendEmail === true ||
+      req.body.sendImmediately === true ||
+      sanitizedBody.Status === 'Sent';
+
+    let emailDispatch = null;
+    if (shouldSendEmail) {
+      try {
+        const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
+        emailDispatch = await dispatchQuotationEmailInternal({
+          quoteId: financeData._id,
+          emailTemplateId: req.body.emailTemplateId || sanitizedBody.emailTemplateId,
+          idempotencyKey,
+          reqEventType: EMAIL_EVENTS.QUOTE_SENT,
+        });
+        if (emailDispatch && emailDispatch.success) {
+          financeData.Status = 'Sent';
+        }
+      } catch (emailErr) {
+        console.error('[FinanceController] Warning: Failed to dispatch quotation email on creation:', emailErr.message);
+        emailDispatch = { success: false, error: emailErr.message };
+      }
+    }
+
+    const responseObj = financeData.toObject ? financeData.toObject() : { ...financeData };
+    if (emailDispatch) {
+      responseObj.emailDispatch = emailDispatch;
+    }
+
+    res.json(responseObj);
   } catch (error) {
     console.error('[Finance Save Error]:', error);
     res.status(500).json({
@@ -122,7 +154,7 @@ exports.finance = async (req, res) => {
       error: error.message
     });
   }
-}
+};
 
 exports.acceptQuote = async (req, res) => {
   const { id } = req.params;
@@ -133,6 +165,14 @@ exports.acceptQuote = async (req, res) => {
 
   try {
     const staffUser = getAuthenticatedStaff(req);
+
+    // UM3-012: Public unauthenticated acceptance MUST strictly use capability token, not raw ObjectId
+    if (!staffUser && mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(403).json({
+        error: 'CAPABILITY_TOKEN_REQUIRED',
+        message: 'Public quote acceptance requires a valid high-entropy capability token, not a raw record ID.',
+      });
+    }
 
     const result = await executeAcceptance({
       quoteIdOrToken: id,
@@ -863,6 +903,109 @@ async function generatePdf(htmlContent, data) {
   }
 
 }
+async function dispatchQuotationEmailInternal({ quoteId, emailTemplateId, content, idempotencyKey, reqEventType }) {
+  if (!ObjectId.isValid(quoteId)) {
+    return { success: false, statusCode: 400, message: 'Invalid Quote ID' };
+  }
+  const invoice = await Finance.findById(quoteId)
+    .populate('customer')
+    .populate('financialTemplate', 'htmlContent');
+  if (!invoice) {
+    return { success: false, statusCode: 404, message: 'Quote not found' };
+  }
+  let company = await CompanyDetails.findOne();
+  if (!company) {
+    company = {
+      companyName: 'Universal Movers B.V.',
+      companyEmail: process.env.SMTP_USER || 'info@universalmovers.nl',
+    };
+  }
+
+  const appSettings = await AppSettings.findOne();
+
+  // Determine canonical event
+  let eventType = reqEventType;
+  if (!eventType) {
+    if (invoice.Status === 'Accepted' || invoice.acceptance?.isAccepted) {
+      eventType = EMAIL_EVENTS.QUOTE_ACCEPTED;
+    } else {
+      eventType = EMAIL_EVENTS.QUOTE_SENT;
+    }
+  }
+
+  // Prepare PDF attachment if required
+  let attachments = [];
+  if (!content) {
+    const data = {
+      company: company,
+      customer: invoice.customer || {},
+      invoice: invoice,
+      code: `/${invoice._id}`,
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
+      currencyPosition: appSettings?.currencyPosition || 'before',
+      currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
+    };
+
+    let html = invoice.financialTemplate?.htmlContent;
+    if (!html) {
+      const defaultTemplate = await DocumentTemplate.findOne({
+        $or: [
+          { type: 'offer' },
+          { type: 'quote' },
+          { name: /standard quotation/i },
+          { name: /quotation/i },
+          { name: /quote/i }
+        ]
+      });
+      html = defaultTemplate?.htmlContent || '<html><body><h1>Quotation</h1></body></html>';
+    }
+
+    try {
+      const pdfBuffer = await generatePdf(html, data);
+      if (pdfBuffer) {
+        attachments.push({
+          filename: `Quotation_${invoice.index || invoice._id}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      }
+    } catch (pdfErr) {
+      console.error("PDF generation skipped in dispatchQuotationEmailInternal:", pdfErr.message);
+    }
+  }
+
+  const recipient = invoice.customer?.email;
+  const quoteCode = invoice.capabilityToken ? `/${invoice.capabilityToken}` : `/${invoice._id}`;
+
+  const dispatchResult = await dispatchOutboxEmail({
+    eventType,
+    recipient,
+    emailTemplateId,
+    context: {
+      company,
+      customer: invoice.customer || {},
+      invoice,
+      code: quoteCode,
+      capabilityToken: invoice.capabilityToken,
+      currency: appSettings?.currency || 'EUR',
+      currencySymbol: appSettings?.currencySymbol || '€',
+    },
+    attachments,
+    idempotencyKey,
+  });
+
+  if (dispatchResult && dispatchResult.success) {
+    if (invoice.Status !== 'Accepted' && invoice.Status !== 'Sent') {
+      invoice.Status = 'Sent';
+      await invoice.save();
+    }
+  }
+
+  return dispatchResult;
+}
+exports.dispatchQuotationEmailInternal = dispatchQuotationEmailInternal;
+
 exports.createInvoicePDF = async (req, res) => {
   const { Id, emailTemplateId, content, eventType: reqEventType } = req.body;
   if (!ObjectId.isValid(Id)) {
@@ -870,92 +1013,12 @@ exports.createInvoicePDF = async (req, res) => {
   }
   const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
   try {
-    const invoice = await Finance.findById(Id)
-      .populate('customer')
-      .populate('financialTemplate', 'htmlContent');
-    if (!invoice) {
-      return res.status(404).send('Invoice not found');
-    }
-    let company = await CompanyDetails.findOne();
-    if (!company) {
-      company = {
-        companyName: 'Universal Movers B.V.',
-        companyEmail: process.env.SMTP_USER || 'info@universalmovers.nl',
-      };
-    }
-
-    const appSettings = await AppSettings.findOne();
-
-    // Determine canonical event
-    let eventType = reqEventType;
-    if (!eventType) {
-      if (invoice.Status === 'Accepted' || invoice.acceptance?.isAccepted) {
-        eventType = EMAIL_EVENTS.QUOTE_ACCEPTED;
-      } else {
-        eventType = EMAIL_EVENTS.QUOTE_SENT;
-      }
-    }
-
-    // Prepare PDF attachment if required
-    let attachments = [];
-    if (!content) {
-      const data = {
-        company: company,
-        customer: invoice.customer || {},
-        invoice: invoice,
-        code: `/${invoice._id}`,
-        currency: appSettings?.currency || 'EUR',
-        currencySymbol: appSettings?.currencySymbol || '€',
-        currencyPosition: appSettings?.currencyPosition || 'before',
-        currencyDecimals: appSettings?.currencyDecimals !== undefined ? appSettings.currencyDecimals : 2,
-      };
-
-      let html = invoice.financialTemplate?.htmlContent;
-      if (!html) {
-        const defaultTemplate = await DocumentTemplate.findOne({
-          $or: [
-            { type: 'offer' },
-            { type: 'quote' },
-            { name: /standard quotation/i },
-            { name: /quotation/i },
-            { name: /quote/i }
-          ]
-        });
-        html = defaultTemplate?.htmlContent || '<html><body><h1>Quotation</h1></body></html>';
-      }
-
-      try {
-        const pdfBuffer = await generatePdf(html, data);
-        if (pdfBuffer) {
-          attachments.push({
-            filename: `Quotation_${invoice.index || invoice._id}.pdf`,
-            content: pdfBuffer,
-            contentType: 'application/pdf',
-          });
-        }
-      } catch (pdfErr) {
-        console.error("PDF generation skipped in createInvoicePDF:", pdfErr.message);
-      }
-    }
-
-    const recipient = invoice.customer?.email;
-    const quoteCode = invoice.capabilityToken ? `/${invoice.capabilityToken}` : `/${invoice._id}`;
-
-    const dispatchResult = await dispatchOutboxEmail({
-      eventType,
-      recipient,
+    const dispatchResult = await dispatchQuotationEmailInternal({
+      quoteId: Id,
       emailTemplateId,
-      context: {
-        company,
-        customer: invoice.customer || {},
-        invoice,
-        code: quoteCode,
-        capabilityToken: invoice.capabilityToken,
-        currency: appSettings?.currency || 'EUR',
-        currencySymbol: appSettings?.currencySymbol || '€',
-      },
-      attachments,
+      content,
       idempotencyKey,
+      reqEventType,
     });
 
     if (!dispatchResult.success && dispatchResult.blocked) {
@@ -964,6 +1027,10 @@ exports.createInvoicePDF = async (req, res) => {
         message: dispatchResult.message,
         missing: dispatchResult.missing,
       });
+    }
+
+    if (!dispatchResult.success && dispatchResult.statusCode) {
+      return res.status(dispatchResult.statusCode).send(dispatchResult.message || 'Failed to dispatch quotation email');
     }
 
     return res.status(200).send(dispatchResult.emailId);
