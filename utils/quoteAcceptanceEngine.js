@@ -188,6 +188,21 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
   // Authoritative financial totals calculation
   const calculatedTotals = calculateCommercialTotals(quote);
 
+  const CompanyDetails = require('../models/companyModel');
+  const { APPROVED_COMPANY_DETAILS } = require('./statutoryInvoice');
+  const companyDoc = (await CompanyDetails.findOne().lean()) || {};
+
+  const resolvedCompanySnapshot = {
+    legalName: companyDoc.companyName || APPROVED_COMPANY_DETAILS.companyName,
+    tradeName: companyDoc.companyName || APPROVED_COMPANY_DETAILS.companyName,
+    address: companyDoc.companyAddress || APPROVED_COMPANY_DETAILS.companyAddress,
+    kvkNumber: companyDoc.kvkNumber || companyDoc.companyRegNumber || APPROVED_COMPANY_DETAILS.kvkNumber,
+    vatNumber: companyDoc.btwNumber || companyDoc.companyVatNumber || APPROVED_COMPANY_DETAILS.btwNumber,
+    bankName: companyDoc.bankName || APPROVED_COMPANY_DETAILS.bankName,
+    iban: companyDoc.iban || APPROVED_COMPANY_DETAILS.iban,
+    bic: companyDoc.bic || APPROVED_COMPANY_DETAILS.bic,
+  };
+
   // Build immutable agreement snapshot
   const agreementSnapshot = {
     quoteId: quote._id,
@@ -208,16 +223,7 @@ async function executeAcceptance({ quoteIdOrToken, acceptancePayload = {}, staff
       phone: quote.customer.phone,
       address: quote.customer.address,
     } : null,
-    companySnapshot: {
-      legalName: 'Universal Movers B.V.',
-      tradeName: 'Universal Movers',
-      address: 'Starterspand, H.J.E. Wenckebachweg 53-M, 1096 AK Amsterdam',
-      kvkNumber: '81234567',
-      vatNumber: 'NL861234567B01',
-      bankName: 'ABN AMRO Bank',
-      iban: 'NL91 ABNA 0417 1643 00',
-      bic: 'ABNANL2A',
-    },
+    companySnapshot: resolvedCompanySnapshot,
     terms: 'Approved Universal Movers B.V. Standard Commercial & Relocation Terms',
     validityDate: quote.expire_date || quote.tokenExpiresAt,
     depositRequired: quote.depositRequired || 0,

@@ -568,9 +568,11 @@ async function dispatchOutboxEmail(options = {}) {
     }
   }
 
-  // 8. Approved Sender Resolution
-  const approvedSender = company.companyEmail || process.env.SMTP_USER || 'info@universalmovers.nl';
-  const fromHeader = `"${company.companyName || 'Universal Movers'}" <${approvedSender}>`;
+  // 8. Approved Sender Resolution & Branding (UM3-079)
+  const senderDisplayName = company.companyName || 'Universal Movers';
+  const approvedSender = process.env.SMTP_USER || company.companyEmail || 'info@universalmovers.nl';
+  const replyToAddress = company.companyEmail || 'info@universal-movers.nl';
+  const fromHeader = `"${senderDisplayName}" <${approvedSender}>`;
 
   // 9. Generate Unique Event ID
   const eventId = `EML-${eventType}-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -627,6 +629,7 @@ async function dispatchOutboxEmail(options = {}) {
       eventId,
       eventType,
       from: fromHeader,
+      replyTo: replyToAddress,
       to: recipient,
       recipient: recipient,
       subject: finalSubject,
@@ -652,6 +655,7 @@ async function dispatchOutboxEmail(options = {}) {
 
       const mailOptions = {
         from: fromHeader,
+        replyTo: replyToAddress,
         to: recipient,
         subject: finalSubject,
         html: renderedHtml,
@@ -678,6 +682,7 @@ async function dispatchOutboxEmail(options = {}) {
         eventId,
         eventType,
         from: fromHeader,
+        replyTo: replyToAddress,
         to: recipient,
         subject: finalSubject,
         html: renderedHtml,

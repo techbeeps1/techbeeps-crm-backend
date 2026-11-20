@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Task = require('../models/taskModel');
 const User = require('../models/user');
 const nodemailer = require('nodemailer');
@@ -23,10 +24,16 @@ exports.createTask = async (req, res) => {
         const taskData = { ...req.body };
 
         // Sanitize ObjectId fields: remove empty strings, 'null', 'undefined'
-        if (!taskData.job || taskData.job === '' || taskData.job === 'undefined' || taskData.job === 'null') {
+        if (taskData.job && typeof taskData.job === 'object' && taskData.job._id) {
+            taskData.job = taskData.job._id;
+        }
+        if (!taskData.job || taskData.job === '' || taskData.job === 'undefined' || taskData.job === 'null' || !mongoose.Types.ObjectId.isValid(taskData.job)) {
             delete taskData.job;
         }
-        if (!taskData.customer || taskData.customer === '' || taskData.customer === 'undefined' || taskData.customer === 'null') {
+        if (taskData.customer && typeof taskData.customer === 'object' && taskData.customer._id) {
+            taskData.customer = taskData.customer._id;
+        }
+        if (!taskData.customer || taskData.customer === '' || taskData.customer === 'undefined' || taskData.customer === 'null' || !mongoose.Types.ObjectId.isValid(taskData.customer)) {
             delete taskData.customer;
         }
         if (taskData.teams && Array.isArray(taskData.teams)) {
@@ -69,7 +76,8 @@ exports.createTask = async (req, res) => {
                             data: { user, task },
                         });
                         const mailOptions = {
-                            from: process.env.SMTP_USER,
+                            from: `"${company?.companyName || 'Universal Movers'}" <${process.env.SMTP_USER}>`,
+                            replyTo: company?.companyEmail || 'info@universal-movers.nl',
                             to: user.email,
                             subject: `New Task Assigned to ${user.username}`,
                             html: userEmailHtml
@@ -189,12 +197,43 @@ exports.updateTask = async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = { ...req.body };
-        if (!updateData.job || updateData.job === '' || updateData.job === 'undefined' || updateData.job === 'null') {
+
+        // UM3-124: Preserve existing Job and Customer relations on partial updates
+        // Extract _id if passed as populated object
+        if (updateData.job && typeof updateData.job === 'object' && updateData.job._id) {
+            updateData.job = updateData.job._id;
+        }
+        if (updateData.customer && typeof updateData.customer === 'object' && updateData.customer._id) {
+            updateData.customer = updateData.customer._id;
+        }
+
+        // Only unlink if explicitly requested (e.g. unlinkJob: true or clearJob: true)
+        if (req.body.unlinkJob === true || req.body.clearJob === true) {
             updateData.job = null;
+        } else if (
+            updateData.job === undefined ||
+            updateData.job === '' ||
+            updateData.job === 'undefined' ||
+            updateData.job === 'null' ||
+            !mongoose.Types.ObjectId.isValid(updateData.job)
+        ) {
+            // Omit from update payload so MongoDB preserves the existing linked job
+            delete updateData.job;
         }
-        if (!updateData.customer || updateData.customer === '' || updateData.customer === 'undefined' || updateData.customer === 'null') {
+
+        if (req.body.unlinkCustomer === true || req.body.clearCustomer === true) {
             updateData.customer = null;
+        } else if (
+            updateData.customer === undefined ||
+            updateData.customer === '' ||
+            updateData.customer === 'undefined' ||
+            updateData.customer === 'null' ||
+            !mongoose.Types.ObjectId.isValid(updateData.customer)
+        ) {
+            // Omit from update payload so MongoDB preserves the existing linked customer
+            delete updateData.customer;
         }
+
         if (updateData.teams && Array.isArray(updateData.teams)) {
             updateData.teams = updateData.teams.filter(tid => tid && tid !== '');
         }
@@ -209,7 +248,10 @@ exports.updateTask = async (req, res) => {
                 updateData.scheduledFor = new Date(`${dateStr}T12:00:00.000Z`);
             }
         }
-        const updatedTask = await Task.findByIdAndUpdate(id, updateData, { new: true });
+        const updatedTask = await Task.findByIdAndUpdate(id, updateData, { new: true })
+            .populate('job', 'relocation index')
+            .populate('customer');
+
         if (!updatedTask) {
             return res.status(404).json({ message: 'Task not found' });
         }

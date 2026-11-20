@@ -70,7 +70,8 @@ exports.sendOtp = async (req, res) => {
         }
 
         const mailOptions = {
-            from: process.env.SMTP_USER,
+            from: `"${company?.companyName || 'Universal Movers'}" <${process.env.SMTP_USER}>`,
+            replyTo: company?.companyEmail || 'info@universal-movers.nl',
             to: email,
             subject: 'Your Verification Code (OTP)',
             html: emailHtml,
@@ -193,17 +194,72 @@ exports.sendEmail = async (req, res) => {
             idempotencyKey,
         });
 
-        if (!dispatchResult.success && dispatchResult.blocked) {
-            return res.status(dispatchResult.statusCode || 422).json({
-                error: dispatchResult.errorCode,
-                message: dispatchResult.message,
+        if (!dispatchResult.success) {
+            const statusCode = dispatchResult.statusCode || (dispatchResult.blocked ? 422 : 500);
+            const errorReason = dispatchResult.message || dispatchResult.deliveryResult?.response || dispatchResult.errorCode || 'Email dispatch failed';
+            return res.status(statusCode).json({
+                success: false,
+                error: dispatchResult.errorCode || 'EMAIL_DISPATCH_FAILED',
+                message: errorReason,
                 missing: dispatchResult.missing,
+                emailId: dispatchResult.emailId,
             });
         }
 
-        return res.status(200).send(dispatchResult.emailId);
+        return res.status(200).json({
+            success: true,
+            emailId: dispatchResult.emailId,
+            message: 'Email dispatched successfully.',
+            deliveryResult: dispatchResult.deliveryResult,
+        });
     } catch (error) {
         console.error("Error in sending mail:", error);
-        res.status(500).send("Error in sending mail: " + error.message);
+        res.status(500).json({ success: false, message: "Error in sending mail: " + error.message });
+    }
+};
+
+exports.getEmailLogs = async (req, res) => {
+    try {
+        const {
+            page = 1,
+            limit = 50,
+            status,
+            eventType,
+            recipient,
+            job,
+            offer,
+        } = req.query;
+
+        const query = {};
+        if (status) query.status = status;
+        if (eventType) query.eventType = eventType;
+        if (recipient) query.recipient = { $regex: recipient.trim(), $options: 'i' };
+        if (job) query.job = job;
+        if (offer) query.offer = offer;
+
+        const pageNum = Math.max(1, parseInt(page, 10) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+        const skip = (pageNum - 1) * limitNum;
+
+        const [logs, total] = await Promise.all([
+            Email.find(query)
+                .sort({ sentAt: -1, createdAt: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            Email.countDocuments(query),
+        ]);
+
+        res.json({
+            success: true,
+            total,
+            page: pageNum,
+            pages: Math.ceil(total / limitNum),
+            limit: limitNum,
+            logs,
+        });
+    } catch (error) {
+        console.error('Error fetching email logs:', error);
+        res.status(500).json({ success: false, message: 'Server error fetching email logs' });
     }
 };

@@ -442,6 +442,12 @@ exports.financeDetail = async (req, res) => {
         });
       }
 
+      const { APPROVED_COMPANY_DETAILS } = require('../utils/statutoryInvoice');
+      const companyDoc = (await CompanyDetails.findOne().lean()) || {};
+      const resolvedBankName = companyDoc.bankName || APPROVED_COMPANY_DETAILS.bankName;
+      const resolvedIban = companyDoc.iban || APPROVED_COMPANY_DETAILS.iban;
+      const resolvedBic = companyDoc.bic || APPROVED_COMPANY_DETAILS.bic;
+
       const pubFinance = {
         _id: finance._id,
         capabilityToken: finance.capabilityToken,
@@ -476,6 +482,13 @@ exports.financeDetail = async (req, res) => {
         paymentOption: finance.paymentOption,
         paymentOptionLabel: formatEnumDisplay(finance.paymentOption, 'en'),
         paymentOptionLabelEn: formatEnumDisplay(finance.paymentOption, 'en'),
+        companyDetails: {
+          ...APPROVED_COMPANY_DETAILS,
+          ...companyDoc,
+          bankName: resolvedBankName,
+          iban: resolvedIban,
+          bic: resolvedBic,
+        },
         commercialTerms: {
           quoteValidityDays: 30,
           depositPercentage: 25,
@@ -484,9 +497,9 @@ exports.financeDetail = async (req, res) => {
           insuranceCoverage: 'Transit cargo insured up to €100,000 under AVV standards',
           cancellationNoticeHours: 48,
           bankDetails: {
-            bankName: 'ABN AMRO Bank N.V.',
-            iban: 'NL91 ABNA 0417 1643 00',
-            bic: 'ABNANL2A',
+            bankName: resolvedBankName,
+            iban: resolvedIban,
+            bic: resolvedBic,
           },
         },
         items: (calc.items || finance.items || []).map(item => ({
