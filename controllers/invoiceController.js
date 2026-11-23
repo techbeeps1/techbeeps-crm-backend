@@ -225,15 +225,28 @@ exports.invoice = async (req, res) => {
 exports.updateInvoice = async (req, res) => {
   const { id } = req.params; // Get the invoice ID from request parameters
   try {
-    const sanitizedData = await sanitizeInvoicePayload(req.body);
-    const updatedInvoice = await Invoice.findByIdAndUpdate(id, sanitizedData, {
-      new: true, // Return the updated document
-    });
-    if (!updatedInvoice) {
+    const existingInvoice = await Invoice.findById(id);
+    if (!existingInvoice) {
       return res.status(404).json({
         message: 'Invoice not found'
       });
     }
+
+    // IMMUTABILITY GUARD: Sent, Paid, Partially Paid, Completed, or Overdue invoices cannot be modified directly
+    const currentStatus = String(existingInvoice.Status || '').trim().toLowerCase();
+    const immutableStatuses = ['sent', 'paid', 'partially paid', 'partially_paid', 'completed', 'overdue'];
+    if (immutableStatuses.includes(currentStatus)) {
+      return res.status(403).json({
+        success: false,
+        message: `Sent or finalized invoices (status: '${existingInvoice.Status}') are immutable and cannot be modified directly. Please issue a credit note for adjustments or corrections.`,
+        error: 'INVOICE_IMMUTABLE'
+      });
+    }
+
+    const sanitizedData = await sanitizeInvoicePayload(req.body);
+    const updatedInvoice = await Invoice.findByIdAndUpdate(id, sanitizedData, {
+      new: true, // Return the updated document
+    });
     res.status(200).json(updatedInvoice);
   } catch (error) {
     res.status(500).json({
@@ -346,26 +359,38 @@ exports.deleteInvoice = async (req, res) => {
   try {
     const invoiceId = req.params.invoiceId;
     const dataCheck = await Invoice.findById(invoiceId);
-    if (dataCheck) {
-      const DeleteData = await Invoice.findOneAndDelete(
-        { _id: dataCheck._id },
-        req.body
-      );
-      res.status(200).send({
-        status: true,
-        msg: "DATA is successfully deleted",
-        data: DeleteData,
-      });
-    } else {
+    if (!dataCheck) {
       return res
         .status(404)
-        .send({ status: false, msg: "Invoice is not found", data: null });
+        .send({ status: false, msg: "Invoice is not found", message: "Invoice is not found", data: null });
     }
+
+    // IMMUTABILITY GUARD: Sent, Paid, Partially Paid, Completed, or Overdue invoices cannot be deleted
+    const currentStatus = String(dataCheck.Status || '').trim().toLowerCase();
+    const immutableStatuses = ['sent', 'paid', 'partially paid', 'partially_paid', 'completed', 'overdue'];
+    if (immutableStatuses.includes(currentStatus)) {
+      return res.status(403).json({
+        status: false,
+        msg: `Sent or finalized invoices (status: '${dataCheck.Status}') are immutable and cannot be deleted. Legal compliance requires corrections to be issued via credit notes.`,
+        message: `Sent or finalized invoices (status: '${dataCheck.Status}') are immutable and cannot be deleted. Legal compliance requires corrections to be issued via credit notes.`,
+        error: 'INVOICE_IMMUTABLE'
+      });
+    }
+
+    const DeleteData = await Invoice.findOneAndDelete(
+      { _id: dataCheck._id },
+      req.body
+    );
+    res.status(200).send({
+      status: true,
+      msg: "DATA is successfully deleted",
+      data: DeleteData,
+    });
   } catch (err) {
     console.error(err);
     res
       .status(500)
-      .send({ status: false, msg: "Internal server error", data: null });
+      .send({ status: false, msg: "Internal server error", message: "Internal server error", data: null });
   }
 };
 
@@ -757,6 +782,14 @@ exports.createInvoicePDF = async (req, res) => {
         message: dispatchResult.message,
         missing: dispatchResult.missing,
       });
+    }
+
+    // Automatically transition Draft/Pending invoice to Sent upon successful email dispatch
+    if (dispatchResult.success) {
+      const currentStatus = String(invoice.Status || '').trim().toLowerCase();
+      if (!currentStatus || currentStatus === 'draft' || currentStatus === 'pending') {
+        await Invoice.findByIdAndUpdate(Id, { Status: 'Sent' });
+      }
     }
 
     return res.status(200).send(dispatchResult.emailId);
