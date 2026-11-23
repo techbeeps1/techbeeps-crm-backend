@@ -16,9 +16,13 @@ exports.createStorageLocation = async (req, res) => {
 exports.getAllStorageLocations = async (req, res) => {
     try {
         const { warehouseId } = req.query; // Get the warehouseId from query parameters
-        const filter = warehouseId ? { warehouse:warehouseId } : {}; // Apply filter if warehouseId exists
+        const filter = { deleted: { $ne: true } };
 
-        const storageLocations = await StorageLocation.find(filter).populate('warehouse'); // Apply the filter
+        if (warehouseId && typeof warehouseId === 'string' && warehouseId.trim() !== '' && warehouseId !== 'undefined' && warehouseId !== 'null') {
+            filter.warehouse = warehouseId.trim();
+        }
+
+        const storageLocations = await StorageLocation.find(filter).populate('warehouse').lean();
         res.status(200).json(storageLocations);
     } catch (error) {
         res.status(500).json({ error: error.message });

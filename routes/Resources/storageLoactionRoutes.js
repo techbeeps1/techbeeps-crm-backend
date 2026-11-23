@@ -10,4 +10,11 @@ router.get('/storage_loaction/:id', storageLocationController.getStorageLocation
 router.post('/storage_loaction/:id', storageLocationController.updateStorageLocation);
 router.delete('/storage_loaction/:id', storageLocationController.deleteStorageLocation);
 
+// Standard spelling aliases
+router.post('/storage_location', storageLocationController.createStorageLocation);
+router.get('/storage_location', storageLocationController.getAllStorageLocations);
+router.get('/storage_location/:id', storageLocationController.getStorageLocationById);
+router.post('/storage_location/:id', storageLocationController.updateStorageLocation);
+router.delete('/storage_location/:id', storageLocationController.deleteStorageLocation);
+
 module.exports = router;
