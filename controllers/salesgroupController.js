@@ -4,6 +4,10 @@ const AppSettings = require('../models/appSettingModel');
 exports.addSalesGroup = async (req, res) => {
     try {
         const { name, type, code, surcharge } = req.body;
+        // Task 40: Reject test/dummy countries (e.g. "QA test", "Test country")
+        if (type === 'country' && /^(qa\s*test|test\s*country|test)$/i.test((name || '').trim())) {
+            return res.status(400).json({ message: 'Cannot add test or dummy country entries' });
+        }
         if (type !== 'tax') {
             const existingGroup = await SalesGroup.findOne({ name, type });
             if (existingGroup) {
@@ -34,7 +38,11 @@ exports.addSalesGroup = async (req, res) => {
 exports.getSalesGroups = async (req, res) => {
     try {
         const { type } = req.query; // Extract 'type' from query parameters
-        const filter = type ? { type } : {};
+        let filter = type ? { type } : {};
+        // Task 40: Filter out test/dummy countries
+        if (type === 'country') {
+            filter.name = { $nin: [/^qa\s*test$/i, /^test\s*country$/i, /^test$/i] };
+        }
         const salesGroups = await SalesGroup.find(filter).sort({name: 1}); // Sort by name in ascending order
 
         if (type === 'property') {
@@ -116,10 +124,12 @@ exports.addMultipleSalesGroups = async (req, res) => {
         if (!salesGroupsArray.length) {
             return res.status(400).json({ message: 'Input should be a non-empty array of sales groups' });
         }
-        const salesGroupsWithCountry = salesGroupsArray.map(group => ({
-            ...group,
-            type: 'country'
-        }));
+        const salesGroupsWithCountry = salesGroupsArray
+            .map(group => ({
+                ...group,
+                type: 'country'
+            }))
+            .filter(group => !/^(qa\s*test|test\s*country|test)$/i.test((group.name || '').trim()));
         const duplicateCheckPromises = salesGroupsWithCountry.map(group =>
             SalesGroup.findOne({ name: group.name, type: group.type })
         );

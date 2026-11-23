@@ -314,6 +314,16 @@ exports.valuationMaster = async (req, res) => {
     let relocationDetails = job.relocation ? job.relocation.toObject ? job.relocation.toObject() : { ...job.relocation } : {};
     relocationDetails = { ...relocationDetails, ...relocation };
 
+    // Task 40: Clamp volume to non-negative to eliminate negative zero ("-0.000") glitches
+    if (relocationDetails.totalVolume !== undefined) {
+      const vol = Number(relocationDetails.totalVolume) || 0;
+      relocationDetails.totalVolume = Math.max(0, vol);
+    }
+    if (relocationDetails.storage_storageVolume !== undefined) {
+      const sVol = Number(relocationDetails.storage_storageVolume) || 0;
+      relocationDetails.storage_storageVolume = Math.max(0, sVol);
+    }
+
     // EXEC-14: Zero out unselected services so they contribute zero charges and zero duration
     if (activeServiceTypeNames.size > 0 || (Array.isArray(services) && services.length === 0)) {
       if (!activeServiceTypeNames.has('unpacking')) {
@@ -360,6 +370,21 @@ exports.valuationMaster = async (req, res) => {
       rooms?.map((room) => ({
         ...room,
         jobId: job._id,
+        inventoryItems: Array.isArray(room.inventoryItems)
+          ? room.inventoryItems.map((box) => ({
+              ...box,
+              quantity: Math.max(0, Number(box.quantity) || 0),
+              price: Math.max(0, Number(box.price) || 0),
+              cubicMeter: Math.max(0, Number(box.cubicMeter) || 0),
+            }))
+          : [],
+        furnitureType: Array.isArray(room.furnitureType)
+          ? room.furnitureType.map((f) => ({
+              ...f,
+              quantity: Math.max(0, Number(f.quantity) || 0),
+              cubicMeter: Math.max(0, Number(f.cubicMeter) || 0),
+            }))
+          : [],
       })) || [];
 
     let materialData =
