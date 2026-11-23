@@ -58,16 +58,20 @@ async function calculateInvoiceBalance(invoice, paymentsList = null) {
 /**
  * Synchronizes the invoice document in MongoDB with the authoritative ledger state.
  */
-async function syncInvoiceLedgerBalance(invoiceId) {
+async function syncInvoiceLedgerBalance(invoiceId, session = null) {
   const Invoice = mongoose.model('Invoice');
   const Payment = mongoose.model('Payment');
 
-  const invoice = await Invoice.findById(invoiceId);
+  const invQuery = Invoice.findById(invoiceId);
+  if (session) invQuery.session(session);
+  const invoice = await invQuery;
   if (!invoice) {
     throw new Error(`Invoice ${invoiceId} not found`);
   }
 
-  const payments = await Payment.find({ invoiceId }).lean();
+  const pQuery = Payment.find({ invoiceId });
+  if (session) pQuery.session(session);
+  const payments = await pQuery.lean();
   const balanceInfo = await calculateInvoiceBalance(invoice, payments);
 
   invoice.paid = balanceInfo.totalPaid;
@@ -75,7 +79,7 @@ async function syncInvoiceLedgerBalance(invoiceId) {
   invoice.balanceDue = balanceInfo.balanceDue;
   invoice.payment = balanceInfo.paymentStatus;
 
-  await invoice.save();
+  await invoice.save(session ? { session } : undefined);
   return { invoice, balanceInfo };
 }
 

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Payment = require('../models/PaymentRecordModel');
 const Invoice = require('../models/invoice');
 const FinancialAuditLog = require('../models/financialAuditModel');
@@ -67,49 +68,72 @@ const recordPayment = async (req, res) => {
       });
     }
 
-    // 4. Create and Save Payment Event
+    // 4. Create and Save Payment Event with Atomic Transaction
     const actorId = req.user?._id || req.user?.id;
     const actorName = req.user?.username || req.user?.email || 'System';
 
-    const payment = new Payment({
-      invoiceId,
-      amount: cleanAmount,
-      date: date ? new Date(date) : new Date(),
-      paymentMode: paymentMode || 'bank_transfer',
-      type: 'payment',
-      status: 'completed',
-      currency: 'EUR',
-      recordedBy: actorId,
-      authorName: actorName,
-      reference: reference || '',
-      description: description || '',
-      idempotencyKey: idempotencyKey || undefined,
-    });
-    await payment.save();
+    let session = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch {
+      session = null;
+    }
 
-    // 5. Synchronize Invoice Document with Authoritative Ledger
-    const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(invoiceId);
+    try {
+      const payment = new Payment({
+        invoiceId,
+        amount: cleanAmount,
+        date: date ? new Date(date) : new Date(),
+        paymentMode: paymentMode || 'bank_transfer',
+        type: 'payment',
+        status: 'completed',
+        currency: 'EUR',
+        recordedBy: actorId,
+        authorName: actorName,
+        reference: reference || '',
+        description: description || '',
+        idempotencyKey: idempotencyKey || undefined,
+      });
+      await payment.save(session ? { session } : undefined);
 
-    // 6. Append Immutable Financial Audit Log
-    await logFinancialEvent({
-      entityType: 'PAYMENT',
-      entityId: String(payment._id),
-      action: 'PAYMENT_RECORDED',
-      amount: cleanAmount,
-      currency: 'EUR',
-      req,
-      reason: description || 'Payment recorded',
-      before: { balanceDue: balanceInfoBefore.balanceDue, paid: balanceInfoBefore.totalPaid },
-      after: { balanceDue: balanceInfo.balanceDue, paid: balanceInfo.totalPaid },
-      metadata: { invoiceId, invoiceIndex: invoice.index, paymentMode },
-    });
+      // 5. Synchronize Invoice Document with Authoritative Ledger
+      const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(invoiceId, session);
 
-    return res.status(201).json({
-      message: 'Payment recorded successfully',
-      payment,
-      balanceInfo,
-      invoice: updatedInvoice,
-    });
+      // 6. Append Immutable Financial Audit Log
+      await logFinancialEvent({
+        entityType: 'PAYMENT',
+        entityId: String(payment._id),
+        action: 'PAYMENT_RECORDED',
+        amount: cleanAmount,
+        currency: 'EUR',
+        req,
+        reason: description || 'Payment recorded',
+        before: { balanceDue: balanceInfoBefore.balanceDue, paid: balanceInfoBefore.totalPaid },
+        after: { balanceDue: balanceInfo.balanceDue, paid: balanceInfo.totalPaid },
+        metadata: { invoiceId, invoiceIndex: invoice.index, paymentMode },
+      });
+
+      if (session) {
+        await session.commitTransaction();
+      }
+
+      return res.status(201).json({
+        message: 'Payment recorded successfully',
+        payment,
+        balanceInfo,
+        invoice: updatedInvoice,
+      });
+    } catch (innerErr) {
+      if (session) {
+        await session.abortTransaction();
+      }
+      throw innerErr;
+    } finally {
+      if (session) {
+        session.endSession();
+      }
+    }
   } catch (error) {
     console.error('recordPayment error:', error);
     return res.status(500).json({ message: 'Error recording payment', error: error.message });
@@ -142,49 +166,72 @@ const reversePayment = async (req, res) => {
     const actorId = req.user?._id || req.user?.id;
     const actorName = req.user?.username || req.user?.email || 'System';
 
-    // 1. Mark original payment as reversed
-    originalPayment.status = 'reversed';
-    originalPayment.reversalReason = reason || 'Reversal requested by authorized user';
-    await originalPayment.save();
+    let session = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch {
+      session = null;
+    }
 
-    // 2. Create append-only reversal record in the ledger
-    const reversalRecord = new Payment({
-      invoiceId: originalPayment.invoiceId,
-      amount: -originalPayment.amount,
-      date: new Date(),
-      paymentMode: originalPayment.paymentMode,
-      type: 'reversal',
-      status: 'completed',
-      currency: originalPayment.currency || 'EUR',
-      recordedBy: actorId,
-      authorName: actorName,
-      reversalOf: originalPayment._id,
-      reversalReason: reason || 'Reversal of payment #' + originalPayment._id,
-      description: `Reversal of payment dated ${originalPayment.date?.toISOString()?.split('T')[0]}: ${reason || 'Authorized reversal'}`,
-    });
-    await reversalRecord.save();
+    try {
+      // 1. Mark original payment as reversed
+      originalPayment.status = 'reversed';
+      originalPayment.reversalReason = reason || 'Reversal requested by authorized user';
+      await originalPayment.save(session ? { session } : undefined);
 
-    // 3. Synchronize Invoice Document with Authoritative Ledger
-    const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(originalPayment.invoiceId);
+      // 2. Create append-only reversal record in the ledger
+      const reversalRecord = new Payment({
+        invoiceId: originalPayment.invoiceId,
+        amount: -originalPayment.amount,
+        date: new Date(),
+        paymentMode: originalPayment.paymentMode,
+        type: 'reversal',
+        status: 'completed',
+        currency: originalPayment.currency || 'EUR',
+        recordedBy: actorId,
+        authorName: actorName,
+        reversalOf: originalPayment._id,
+        reversalReason: reason || 'Reversal of payment #' + originalPayment._id,
+        description: `Reversal of payment dated ${originalPayment.date?.toISOString()?.split('T')[0]}: ${reason || 'Authorized reversal'}`,
+      });
+      await reversalRecord.save(session ? { session } : undefined);
 
-    // 4. Log Audit Event
-    await logFinancialEvent({
-      entityType: 'PAYMENT',
-      entityId: String(originalPayment._id),
-      action: 'PAYMENT_REVERSED',
-      amount: originalPayment.amount,
-      currency: 'EUR',
-      req,
-      reason: reason || 'Payment reversal',
-      metadata: { originalPaymentId: originalPayment._id, reversalRecordId: reversalRecord._id },
-    });
+      // 3. Synchronize Invoice Document with Authoritative Ledger
+      const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(originalPayment.invoiceId, session);
 
-    return res.status(200).json({
-      message: 'Payment reversed successfully',
-      reversalRecord,
-      balanceInfo,
-      invoice: updatedInvoice,
-    });
+      // 4. Log Audit Event
+      await logFinancialEvent({
+        entityType: 'PAYMENT',
+        entityId: String(originalPayment._id),
+        action: 'PAYMENT_REVERSED',
+        amount: originalPayment.amount,
+        currency: 'EUR',
+        req,
+        reason: reason || 'Payment reversal',
+        metadata: { originalPaymentId: originalPayment._id, reversalRecordId: reversalRecord._id },
+      });
+
+      if (session) {
+        await session.commitTransaction();
+      }
+
+      return res.status(200).json({
+        message: 'Payment reversed successfully',
+        reversalRecord,
+        balanceInfo,
+        invoice: updatedInvoice,
+      });
+    } catch (innerErr) {
+      if (session) {
+        await session.abortTransaction();
+      }
+      throw innerErr;
+    } finally {
+      if (session) {
+        session.endSession();
+      }
+    }
   } catch (error) {
     console.error('reversePayment error:', error);
     return res.status(500).json({ message: 'Error reversing payment', error: error.message });
@@ -236,45 +283,68 @@ const issueCreditNote = async (req, res) => {
     const actorId = req.user?._id || req.user?.id;
     const actorName = req.user?.username || req.user?.email || 'System';
 
-    const creditNote = new Payment({
-      invoiceId,
-      amount: cleanAmount,
-      date: date ? new Date(date) : new Date(),
-      paymentMode: 'credit_deduction',
-      type: 'credit_note',
-      status: 'completed',
-      currency: 'EUR',
-      recordedBy: actorId,
-      authorName: actorName,
-      creditNoteIndex,
-      taxRate,
-      taxAmount,
-      netAmount,
-      description: reason || `Credit Note ${creditNoteIndex} issued`,
-    });
-    await creditNote.save();
+    let session = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch {
+      session = null;
+    }
 
-    // Synchronize Invoice Document with Authoritative Ledger
-    const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(invoiceId);
+    try {
+      const creditNote = new Payment({
+        invoiceId,
+        amount: cleanAmount,
+        date: date ? new Date(date) : new Date(),
+        paymentMode: 'credit_deduction',
+        type: 'credit_note',
+        status: 'completed',
+        currency: 'EUR',
+        recordedBy: actorId,
+        authorName: actorName,
+        creditNoteIndex,
+        taxRate,
+        taxAmount,
+        netAmount,
+        description: reason || `Credit Note ${creditNoteIndex} issued`,
+      });
+      await creditNote.save(session ? { session } : undefined);
 
-    // Audit Event
-    await logFinancialEvent({
-      entityType: 'CREDIT_NOTE',
-      entityId: String(creditNote._id),
-      action: 'CREDIT_NOTE_ISSUED',
-      amount: cleanAmount,
-      currency: 'EUR',
-      req,
-      reason: reason || 'Credit Note Issued',
-      metadata: { creditNoteIndex, invoiceId, invoiceIndex: invoice.index, taxRate, taxAmount, netAmount },
-    });
+      // Synchronize Invoice Document with Authoritative Ledger
+      const { invoice: updatedInvoice, balanceInfo } = await syncInvoiceLedgerBalance(invoiceId, session);
 
-    return res.status(201).json({
-      message: 'Credit note issued successfully',
-      creditNote,
-      balanceInfo,
-      invoice: updatedInvoice,
-    });
+      // Audit Event
+      await logFinancialEvent({
+        entityType: 'CREDIT_NOTE',
+        entityId: String(creditNote._id),
+        action: 'CREDIT_NOTE_ISSUED',
+        amount: cleanAmount,
+        currency: 'EUR',
+        req,
+        reason: reason || 'Credit Note Issued',
+        metadata: { creditNoteIndex, invoiceId, invoiceIndex: invoice.index, taxRate, taxAmount, netAmount },
+      });
+
+      if (session) {
+        await session.commitTransaction();
+      }
+
+      return res.status(201).json({
+        message: 'Credit note issued successfully',
+        creditNote,
+        balanceInfo,
+        invoice: updatedInvoice,
+      });
+    } catch (innerErr) {
+      if (session) {
+        await session.abortTransaction();
+      }
+      throw innerErr;
+    } finally {
+      if (session) {
+        session.endSession();
+      }
+    }
   } catch (error) {
     console.error('issueCreditNote error:', error);
     return res.status(500).json({ message: 'Error issuing credit note', error: error.message });

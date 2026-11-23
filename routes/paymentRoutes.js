@@ -15,7 +15,9 @@ router.use(authMiddleware);
 
 router.post('/record-payment', recordPayment);
 router.post('/payment/reverse/:paymentId', reversePayment);
+router.post('/reverse-payment/:paymentId', reversePayment);
 router.post('/credit-note', issueCreditNote);
+router.post('/issue-credit-note', issueCreditNote);
 router.get('/credit-notes/:invoiceId', getCreditNotesByInvoiceId);
 router.get('/payments/:invoiceId', getPaymentsByInvoiceId);
 router.get('/payments', getAllPayments);
