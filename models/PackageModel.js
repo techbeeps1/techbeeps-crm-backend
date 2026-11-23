@@ -17,7 +17,9 @@ const PackageSchema = new mongoose.Schema({
     invoice: { type: dynamicSchema, default: {} },
     start_job: { type: dynamicSchema, default: {} },
     Storage: { type: dynamicSchema, default: {} }, 
-    appointment: { type: dynamicSchema, default: {} } 
+    appointment: { type: dynamicSchema, default: {} },
+    isJobSpecific: { type: Boolean, default: false, index: true },
+    jobId: { type: mongoose.Schema.Types.ObjectId, ref: 'jobSchedule', default: null }
 }, { strict: false }); 
 
 const Package = mongoose.model('package', PackageSchema);
