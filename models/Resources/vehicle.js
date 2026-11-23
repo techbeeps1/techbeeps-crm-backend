@@ -8,12 +8,10 @@ const MaintenanceSchema = new mongoose.Schema({
   maintenanceRequired: { type: Date, default: null },
 });
 
-// Fuel Card Schema
+// Fuel Card Schema (Sensitive PIN & CVC removed for PCI-DSS & compliance)
 const FuelCardSchema = new mongoose.Schema({
   supplier: { type: String },
   cardNumber: { type: String },
-  cvc: { type: String },
-  pincode: { type: String },
 });
 
 // Vehicle Schema

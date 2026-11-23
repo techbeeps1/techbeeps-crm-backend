@@ -17,6 +17,14 @@ const cleanVehiclePayload = (data) => {
     }
   }
 
+  // Strip unnecessary and sensitive Fuel Card PIN & CVC fields (Task 39)
+  if (cleaned.fuelCard) {
+    cleaned.fuelCard = { ...cleaned.fuelCard };
+    delete cleaned.fuelCard.cvc;
+    delete cleaned.fuelCard.pincode;
+    delete cleaned.fuelCard.pin;
+  }
+
   // Convert numeric fields properly if provided (keep contents as text/mixed for passengers or custom text)
   const numberFields = ['pricePerKilometer', 'pricePerHour', 'floors', 'length', 'width', 'height', 'tailLiftLength', 'drawWeight'];
   numberFields.forEach((field) => {
