@@ -17,7 +17,7 @@ const leaveBalanceSchema = new mongoose.Schema(
     },
     annualEntitlement: {
       type: Number,
-      default: 12, // Default 12 paid leaves per year
+      default: 20, // Statutory Dutch baseline: 20 paid vacation days per year (4 x weekly working days)
     },
     usedDays: {
       type: Number,

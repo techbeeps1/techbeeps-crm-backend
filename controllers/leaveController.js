@@ -87,9 +87,10 @@ const reconcileEmployeeLeaveBalance = async (employeeId, year) => {
       breakdown.unpaid = (breakdown.unpaid || 0) + unpaid;
     }
 
-    // STATUTORY SEPARATION: Only Annual/Vacation (and casual/emergency) consumes annual vacation quota!
-    // Sickness (Ziekmelding) does NOT consume annual vacation quota under Dutch labor law.
-    if (field === 'annual' || field === 'casual' || field === 'emergency') {
+    // STATUTORY SEPARATION (Dutch Labor Law & Art. 7:629 BW):
+    // Only Annual / Vacation (and casual discretionary PTO) consumes annual vacation quota!
+    // Sickness (Ziekmelding) is paid under Art. 7:629 BW and does NOT consume annual vacation quota.
+    if (field === 'annual' || field === 'casual') {
       totalVacationPaidDays += paid;
     }
     totalApprovedPaidDays += paid;
@@ -103,7 +104,7 @@ const reconcileEmployeeLeaveBalance = async (employeeId, year) => {
       employeeId,
       employeeName: user?.username || 'Staff',
       year: targetYear,
-      annualEntitlement: 12,
+      annualEntitlement: 20,
       usedDays: totalVacationPaidDays,
       unpaidDays: totalApprovedUnpaidDays,
       usedBreakdown: breakdown,
@@ -285,7 +286,7 @@ exports.createLeaveRequest = async (req, res) => {
         employeeId: targetEmployeeId,
         employeeName: targetEmployeeName,
         year: currentYear,
-        annualEntitlement: 12,
+        annualEntitlement: 20,
         usedDays: 0,
         unpaidDays: 0,
       });
@@ -304,7 +305,7 @@ exports.createLeaveRequest = async (req, res) => {
       paidDays = 0;
       unpaidDays = calculatedDays;
     } else if (leaveType === 'Annual / Vacation') {
-      const remainingVacation = Math.max(0, (balance.annualEntitlement || 12) - (balance.usedDays || 0));
+      const remainingVacation = Math.max(0, (balance.annualEntitlement || 20) - (balance.usedDays || 0));
       if (!isAdmin && calculatedDays > remainingVacation) {
         return res.status(422).json({
           success: false,
@@ -323,7 +324,7 @@ exports.createLeaveRequest = async (req, res) => {
         unpaidDays = calculatedDays - remainingVacation;
       }
     } else {
-      const remainingPaid = Math.max(0, (balance.annualEntitlement || 12) - (balance.usedDays || 0));
+      const remainingPaid = Math.max(0, (balance.annualEntitlement || 20) - (balance.usedDays || 0));
       if (remainingPaid >= calculatedDays) {
         paidDays = calculatedDays;
         unpaidDays = 0;
@@ -570,7 +571,7 @@ exports.getLeaveBalances = async (req, res) => {
       balanceObj.pendingDays = pendingDays;
       balanceObj.remainingDays = Math.max(
         0,
-        (balanceObj.annualEntitlement || 12) - (balanceObj.usedDays || 0)
+        (balanceObj.annualEntitlement || 20) - (balanceObj.usedDays || 0)
       );
 
       return res.status(200).json({
@@ -604,7 +605,7 @@ exports.getLeaveBalances = async (req, res) => {
       cardObj.pendingDays = pendingDays;
       cardObj.remainingDays = Math.max(
         0,
-        (cardObj.annualEntitlement || 12) - (cardObj.usedDays || 0)
+        (cardObj.annualEntitlement || 20) - (cardObj.usedDays || 0)
       );
 
       cards.push(cardObj);
@@ -635,7 +636,7 @@ exports.updateLeaveBalance = async (req, res) => {
         employeeId,
         employeeName: user?.username || 'Employee',
         year: targetYear,
-        annualEntitlement: 12,
+        annualEntitlement: 20,
         usedDays: 0,
         unpaidDays: 0,
       });
