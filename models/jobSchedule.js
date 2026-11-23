@@ -133,19 +133,14 @@ const jodScheduleSchema = new mongoose.Schema({
 jodScheduleSchema.pre('save', async function () {
   if (!this.isNew) return;
 
+  if (this.index && typeof this.index === 'string' && this.index.trim() !== '') {
+    return;
+  }
+
+  // UM3-027 / Task 31: Atomic thread-safe job sequence allocator (concurrency collision proof)
+  const { getNextJobIndex } = require('../utils/sequenceGenerator');
   const currentYear = new Date().getFullYear();
-
-  const lastJob = await this.constructor
-    .findOne({
-      index: new RegExp(`^${currentYear}/`)
-    })
-    .sort({ createdAt: -1 });
-
-  const lastIndex = lastJob?.index
-    ? parseInt(lastJob.index.split('/')[1], 10)
-    : 0;
-
-  this.index = `${currentYear}/${String(lastIndex + 1).padStart(4, '0')}`;
+  this.index = await getNextJobIndex(false, currentYear);
 });
 
 module.exports = mongoose.model("jobSchedule", jodScheduleSchema);

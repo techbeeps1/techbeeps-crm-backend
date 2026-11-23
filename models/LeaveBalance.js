@@ -13,7 +13,7 @@ const leaveBalanceSchema = new mongoose.Schema(
     },
     year: {
       type: Number,
-      default: new Date().getFullYear(),
+      default: () => new Date().getFullYear(),
     },
     annualEntitlement: {
       type: Number,

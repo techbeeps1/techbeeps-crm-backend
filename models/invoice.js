@@ -37,7 +37,7 @@ const invoiceSchema = new mongoose.Schema({
   discount: { type: Number, default: 0 },
   discountedPrice: { type: Number, default: 0 },
   discount_description: { type: String },
-  year: { type: Number, default: new Date().getFullYear() },
+  year: { type: Number, default: () => new Date().getFullYear() },
   Status: { type: String },
   note: { type: String },
   ignoreRules: { type: String },
