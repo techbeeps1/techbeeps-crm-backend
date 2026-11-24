@@ -8,9 +8,9 @@ const roleMiddleware = require('../middlewares/roleMiddleware');
 router.get('/templates', authMiddleware, documentTemplateController.getDocumentTemplates);
 router.get('/templates/:id', authMiddleware, documentTemplateController.getDocumentTemplateById);
 
-// Mutation endpoints: only Admin can create, modify, or delete templates (preventing PDF template injection)
-router.post('/templates', authMiddleware, roleMiddleware('Admin'), documentTemplateController.createDocumentTemplate);
-router.put('/templates/:id', authMiddleware, roleMiddleware('Admin'), documentTemplateController.updateDocumentTemplate);
-router.delete('/templates/:id', authMiddleware, roleMiddleware('Admin'), documentTemplateController.deleteDocumentTemplate);
+// Mutation endpoints: only Admin / SuperAdmin can create, modify, or delete templates (preventing PDF template injection)
+router.post('/templates', authMiddleware, roleMiddleware(['Admin', 'SuperAdmin', 'superadmin', 'admin']), documentTemplateController.createDocumentTemplate);
+router.put('/templates/:id', authMiddleware, roleMiddleware(['Admin', 'SuperAdmin', 'superadmin', 'admin']), documentTemplateController.updateDocumentTemplate);
+router.delete('/templates/:id', authMiddleware, roleMiddleware(['Admin', 'SuperAdmin', 'superadmin', 'admin']), documentTemplateController.deleteDocumentTemplate);
 
 module.exports = router;

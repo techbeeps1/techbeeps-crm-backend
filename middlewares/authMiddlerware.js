@@ -19,9 +19,10 @@ const authMiddleware = async (req, res, next) => {
 
     const targetUserId = innerUser.id || innerUser.userId || innerUser._id || decoded.id || decoded.userId || decoded._id;
 
+    let userDoc = null;
     if (targetUserId) {
       try {
-        const userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
+        userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
         if (!userDoc) {
           return res.status(401).json({ msg: 'User account not found or removed.' });
         }
@@ -46,7 +47,7 @@ const authMiddleware = async (req, res, next) => {
       id: targetUserId,
       userId: targetUserId,
       _id: targetUserId,
-      role: innerUser.role || decoded.role || 'Staff',
+      role: (userDoc && userDoc.role) ? userDoc.role : (innerUser.role || decoded.role || 'Staff'),
       access: innerUser.access || decoded.access || [],
       username: innerUser.username || decoded.username || '',
     };
@@ -71,9 +72,10 @@ const optionalAuthMiddleware = async (req, res, next) => {
     const innerUser = (decoded && typeof decoded.user === 'object' && decoded.user !== null) ? decoded.user : {};
     const targetUserId = innerUser.id || innerUser.userId || innerUser._id || decoded.id || decoded.userId || decoded._id;
 
+    let userDoc = null;
     if (targetUserId) {
       try {
-        const userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
+        userDoc = await User.findById(targetUserId).select('isActive isRestricted outofservice role');
         if (!userDoc) {
           return res.status(401).json({ msg: 'User account not found or removed.' });
         }
@@ -98,7 +100,7 @@ const optionalAuthMiddleware = async (req, res, next) => {
       id: targetUserId,
       userId: targetUserId,
       _id: targetUserId,
-      role: innerUser.role || decoded.role || 'Staff',
+      role: (userDoc && userDoc.role) ? userDoc.role : (innerUser.role || decoded.role || 'Staff'),
       access: innerUser.access || decoded.access || [],
       username: innerUser.username || decoded.username || '',
     };

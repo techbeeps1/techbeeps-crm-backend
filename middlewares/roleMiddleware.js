@@ -3,11 +3,11 @@ const roleMiddleware = (requiredRole) => {
     if (!req.user) {
       return res.status(401).json({ msg: 'Unauthorized' });
     }
-    // Admin always has full privileges
-    if (req.user.role && String(req.user.role).toLowerCase() === 'admin') {
+    const userRole = String(req.user.role || '').toLowerCase();
+    // Admin and Superadmin always have full privileges
+    if (userRole === 'admin' || userRole === 'superadmin') {
       return next();
     }
-    const userRole = String(req.user.role || '').toLowerCase();
     if (Array.isArray(requiredRole)) {
       const allowedRoles = requiredRole.map(r => String(r).toLowerCase());
       if (!allowedRoles.includes(userRole)) {
@@ -25,7 +25,8 @@ const permissionMiddleware = (moduleName) => {
     if (!req.user) {
       return res.status(401).json({ msg: 'Unauthorized' });
     }
-    if (req.user.role === 'Admin') {
+    const userRole = String(req.user.role || '').toLowerCase();
+    if (userRole === 'admin' || userRole === 'superadmin') {
       return next();
     }
     const accessList = req.user.access || [];
