@@ -442,6 +442,7 @@ function calc(S, K) {
 }
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 
 let cachedDefaultSettings = null;
 
@@ -461,8 +462,60 @@ function getDefaultSettings() {
   return clone(cachedDefaultSettings);
 }
 
+async function getActiveSettingsAsync() {
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      const PricingSettings = mongoose.model('PricingSettings');
+      const activeDoc = await PricingSettings.findOne({ isActive: true }).sort({ version: -1 }).lean();
+      if (activeDoc && activeDoc.settings) {
+        return clone(activeDoc.settings);
+      }
+    } catch (e) {
+      // Fall through to file fallback
+    }
+  }
+  return getDefaultSettings();
+}
+
+async function seedDefaultSettingsIfEmpty() {
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      const PricingSettings = mongoose.model('PricingSettings');
+      const count = await PricingSettings.countDocuments();
+      if (count === 0) {
+        const fileSettings = getDefaultSettings();
+        await PricingSettings.create({
+          version: 3,
+          name: 'Official Pricing Engine v3 (Universal Movers)',
+          description: 'Initial seeding of version 3 configurable settings',
+          startDate: new Date('2026-01-01'),
+          isActive: true,
+          settings: fileSettings,
+        });
+        console.log('[PricingEngineV3] Seeded default version 3 settings into MongoDB.');
+      }
+    } catch (e) {
+      console.warn('[PricingEngineV3 Seed Warning]:', e.message);
+    }
+  }
+}
+
 function resolveSettings(overrides = null) {
   const base = getDefaultSettings();
+  if (!overrides || typeof overrides !== 'object') return base;
+  const merged = deepMerge(base, overrides);
+  for (const k of Object.keys(overrides)) {
+    if (typeof overrides[k] === 'object' && overrides[k] !== null && !Array.isArray(overrides[k])) {
+      merged[k] = Object.assign({}, base[k], overrides[k]);
+    } else {
+      merged[k] = overrides[k];
+    }
+  }
+  return merged;
+}
+
+async function resolveSettingsAsync(overrides = null) {
+  const base = await getActiveSettingsAsync();
   if (!overrides || typeof overrides !== 'object') return base;
   const merged = deepMerge(base, overrides);
   for (const k of Object.keys(overrides)) {
@@ -501,7 +554,10 @@ if (typeof module !== 'undefined') {
     tariefVerhuizer,
     vensterU,
     getDefaultSettings,
+    getActiveSettingsAsync,
+    seedDefaultSettingsIfEmpty,
     resolveSettings,
+    resolveSettingsAsync,
     calculatePrice,
     calculateAdvice,
   };

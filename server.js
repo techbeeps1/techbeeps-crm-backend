@@ -86,6 +86,10 @@ async function connectToMongoDB() {
       socketTimeoutMS: 45000,
     }).then((m) => {
       console.log('Connected to MongoDB Atlas!');
+      try {
+        const { seedDefaultSettingsIfEmpty } = require('./services/pricingEngineV3Service');
+        seedDefaultSettingsIfEmpty().catch(() => {});
+      } catch (seedErr) {}
       return m;
     }).catch((err) => {
       cachedDbConnection = null;
@@ -141,6 +145,7 @@ require("./models/invoice");
 require("./models/finance");
 require("./models/companyModel");
 require("./models/appSettingModel");
+require("./models/pricingSettingsModel");
 
 const emailRoutes = require("./routes/emailRoutes");
 const userRoutes = require("./routes/userRoutes");
