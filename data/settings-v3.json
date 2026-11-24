@@ -1,0 +1,314 @@
+{
+  "arbeid": {
+    "loon": 16.5,
+    "wgl": 30,
+    "factor_nd": 1.15,
+    "overhead_maand": 2500,
+    "decl_uren": 500,
+    "kost_modus": "vast",
+    "kost_vast": 30,
+    "dag_norm": 8,
+    "overwerk_pct": 30,
+    "overwerk_doorberekenen": true,
+    "max_werkdag": 12,
+    "kost_toeslag": {
+      "doordeweeks": 0,
+      "zaterdag": 0,
+      "zondag": 0,
+      "feestdag": 0,
+      "avond": 0
+    }
+  },
+  "ploeg": {
+    "min": 2,
+    "max": 6,
+    "special_tekort": "hulp",
+    "hulp_uren": 2
+  },
+  "tarief": {
+    "verhuizer_modus": "afgeleid",
+    "verhuizer_vast": 37.5
+  },
+  "prod": {
+    "m3_per_manuur": 1.2
+  },
+  "adres": {
+    "trap_pct": 10,
+    "inpandig_pct": 5,
+    "verhuislift_pct": 0,
+    "loop_drempel": 20,
+    "loop_pct": 10,
+    "parkeer_pct": 0,
+    "smal_pct": 0
+  },
+  "extra": {
+    "inpak_min": 6,
+    "uitpak_min": 5,
+    "doos_m3": 0.1
+  },
+  "meubels": [
+    {
+      "dem": 15,
+      "id": "std",
+      "mon": 15,
+      "naam": "Standard item"
+    },
+    {
+      "dem": 20,
+      "id": "bed",
+      "mon": 25,
+      "naam": "Double bed"
+    },
+    {
+      "dem": 30,
+      "id": "kast",
+      "mon": 45,
+      "naam": "Large wardrobe"
+    },
+    {
+      "dem": 15,
+      "id": "bureau",
+      "mon": 15,
+      "naam": "Desk"
+    }
+  ],
+  "reis": {
+    "per_man": true,
+    "voorrij": 0,
+    "gratis_km": 0,
+    "stop_min": 20,
+    "spits_pct": 20,
+    "max_rijtijd_min": 540,
+    "pauze_na_min": 270,
+    "pauze_min": 45,
+    "pauze_betaald": false,
+    "hotel": 90,
+    "dagvergoeding": 35,
+    "marge_op_doorbelast": false
+  },
+  "internationaal": {
+    "douane_kost": 0,
+    "douane_verkoop_modus": "afgeleid",
+    "douane_vast": 0,
+    "grens_wacht_min": 60
+  },
+  "wagens": [
+    {
+      "id": "bak",
+      "km_incl": 50,
+      "kost_dag": 0,
+      "kost_km": 0.3,
+      "kost_uur": 14,
+      "m3": 22,
+      "naam": "Box truck 22 m³",
+      "verkoop_inzet": 103.31,
+      "verkoop_km": 0.5,
+      "verkoop_modus": "afgeleid",
+      "verkoop_uur": 25
+    },
+    {
+      "id": "bak40",
+      "km_incl": 50,
+      "kost_dag": 0,
+      "kost_km": 0.35,
+      "kost_uur": 18,
+      "m3": 40,
+      "naam": "Box truck 40 m³",
+      "verkoop_inzet": 206.61,
+      "verkoop_km": 0.5,
+      "verkoop_modus": "per_inzet",
+      "verkoop_uur": 30
+    },
+    {
+      "id": "bak60",
+      "km_incl": 50,
+      "kost_dag": 0,
+      "kost_km": 0.4,
+      "kost_uur": 22,
+      "m3": 60,
+      "naam": "Box truck 60 m³",
+      "verkoop_inzet": 309.92,
+      "verkoop_km": 0.5,
+      "verkoop_modus": "per_inzet",
+      "verkoop_uur": 35
+    },
+    {
+      "id": "bus",
+      "km_incl": 30,
+      "kost_dag": 0,
+      "kost_km": 0.2,
+      "kost_uur": 9,
+      "m3": 12,
+      "naam": "Van 12 m³",
+      "verkoop_inzet": 60,
+      "verkoop_km": 0.35,
+      "verkoop_modus": "afgeleid",
+      "verkoop_uur": 15
+    }
+  ],
+  "lift": {
+    "kost_uur": 50,
+    "verkoop_modus": "afgeleid",
+    "eerste_uur": 139,
+    "per_halfuur": 60
+  },
+  "materiaal": [
+    {
+      "id": "autolock",
+      "kost": 2.5,
+      "naam": "Autolock moving box",
+      "verkoop": 2.5,
+      "verkoop_modus": "afgeleid"
+    }
+  ],
+  "dozen": {
+    "rit_min": 60,
+    "rit_km": 30,
+    "mannen": 1,
+    "wagen": "bus",
+    "verkoop_modus": "afgeleid",
+    "vast_rit": 45
+  },
+  "specials": [
+    {
+      "id": "piano",
+      "manuren": 2,
+      "mat": 15,
+      "naam": "Upright piano",
+      "vast": 150,
+      "verkoop_modus": "afgeleid",
+      "min_ploeg": 3
+    },
+    {
+      "id": "vleugel",
+      "manuren": 6,
+      "mat": 40,
+      "naam": "Grand piano",
+      "vast": 450,
+      "verkoop_modus": "afgeleid",
+      "min_ploeg": 4
+    },
+    {
+      "id": "kluis",
+      "manuren": 2,
+      "mat": 10,
+      "naam": "Safe up to 200 kg",
+      "vast": 125,
+      "verkoop_modus": "afgeleid",
+      "min_ploeg": 3
+    },
+    {
+      "id": "koelkast",
+      "manuren": 1,
+      "mat": 0,
+      "naam": "American fridge",
+      "vast": 60,
+      "verkoop_modus": "afgeleid",
+      "min_ploeg": 2
+    },
+    {
+      "id": "aquarium",
+      "manuren": 1.5,
+      "mat": 20,
+      "naam": "Large aquarium",
+      "vast": 95,
+      "verkoop_modus": "afgeleid",
+      "min_ploeg": 2
+    }
+  ],
+  "diensten": [
+    {
+      "id": "lamp",
+      "mat": 0,
+      "min": 20,
+      "naam": "Hang a lamp",
+      "vast": 25,
+      "verkoop_modus": "afgeleid"
+    },
+    {
+      "id": "tv",
+      "mat": 0,
+      "min": 45,
+      "naam": "Mount a TV on the wall",
+      "vast": 60,
+      "verkoop_modus": "afgeleid"
+    },
+    {
+      "id": "rail",
+      "mat": 0,
+      "min": 30,
+      "naam": "Hang a curtain rail",
+      "vast": 35,
+      "verkoop_modus": "afgeleid"
+    },
+    {
+      "id": "afval",
+      "mat": 35,
+      "min": 15,
+      "naam": "Waste disposal, per m³",
+      "vast": 60,
+      "verkoop_modus": "afgeleid"
+    }
+  ],
+  "verzekering": {
+    "reserve_pct": 1,
+    "premie_pct": 0,
+    "certificaat_prijs": 0
+  },
+  "taxatie": {
+    "meerekenen": true,
+    "min_fysiek": 75,
+    "min_video": 30,
+    "min_foto": 15,
+    "km_fysiek": 25,
+    "km_kost": 0.25,
+    "conversie_pct": 50
+  },
+  "toeslag": {
+    "doordeweeks": 0,
+    "zaterdag": 25,
+    "zondag": 75,
+    "feestdag": 75,
+    "avond": 0,
+    "spoed": 0
+  },
+  "opslag": {
+    "per_m3_maand": 10,
+    "handling_m3": 0,
+    "min_maanden": 1
+  },
+  "comm": {
+    "marge": 15,
+    "marge_drempel": 10,
+    "buffer_fysiek": 5,
+    "buffer_video": 10,
+    "buffer_foto": 15,
+    "min_prijs": 0,
+    "min_uren": 3,
+    "afronding": 5,
+    "btw": 21
+  },
+  "profielen": [
+    {
+      "id": "part",
+      "incl": true,
+      "marge": "",
+      "naam": "Private"
+    },
+    {
+      "id": "zak",
+      "incl": false,
+      "marge": "",
+      "naam": "Business"
+    }
+  ],
+  "meerwerk": {
+    "tolerantie": 10,
+    "extra_m3_modus": "afgeleid",
+    "extra_m3_vast": 35,
+    "wacht_gratis": 15,
+    "wacht_modus": "afgeleid",
+    "wacht_vast": 10,
+    "extra_stop": 0
+  }
+}
