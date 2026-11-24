@@ -110,6 +110,18 @@ invoiceSchema.index({ index: 1 }, { unique: true, sparse: true });
 
 
 invoiceSchema.pre('save', async function () {
+  // Task 41: Guarantee dueDate and expire_date synchronization on document save
+  if (this.dueDate && !this.expire_date) {
+    this.expire_date = this.dueDate;
+  } else if (this.expire_date && !this.dueDate) {
+    this.dueDate = this.expire_date;
+  } else if (!this.dueDate && !this.expire_date) {
+    const base = this.date || this.createdAt || new Date();
+    const defaultDue = new Date(new Date(base).getTime() + 14 * 86400000);
+    this.dueDate = defaultDue;
+    this.expire_date = defaultDue;
+  }
+
   if (!this.isNew) return;
 
   const crypto = require('crypto');

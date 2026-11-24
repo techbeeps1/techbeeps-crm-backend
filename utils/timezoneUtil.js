@@ -71,7 +71,7 @@ function formatAmsterdamDate(val) {
       const [yyyy, mm, dd] = trimmed.split('-');
       return `${dd}-${mm}-${yyyy}`;
     }
-    if (/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z?$/.test(trimmed)) {
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
       const [yyyy, mm, dd] = trimmed.split('T')[0].split('-');
       return `${dd}-${mm}-${yyyy}`;
     }

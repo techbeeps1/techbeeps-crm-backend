@@ -1,17 +1,12 @@
 const DEFAULT_R2_LOGO = 'https://pub-5a1825f2dbec4d2eb0b6c533f4b0fa5f.r2.dev/logos/universal_movers_logo.png';
 const TECHBEEPS_LOGO_REGEX = /https:\/\/assets\.unlayer\.com\/projects\/0\/1732090350147-logo\.png(\?[^"'\s>]*)?/gi;
+const { formatAmsterdamDate } = require('./timezoneUtil');
 
 /**
- * Formats a Date or date string to Dutch statutory format DD-MM-YYYY.
+ * Formats a Date or date string to Dutch statutory format DD-MM-YYYY in Europe/Amsterdam timezone.
  */
 function formatDutchDate(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return String(val);
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+  return formatAmsterdamDate(val);
 }
 
 /**

@@ -111,11 +111,21 @@ const sanitizeInvoicePayload = async (data) => {
     }
   }
 
+  // Task 41: Harmonize and synchronize dueDate and expire_date
+  let baseIssueDate = payload.date ? new Date(payload.date) : new Date();
+  if (isNaN(baseIssueDate.getTime())) {
+    baseIssueDate = new Date();
+  }
+
+  const effectiveDueDate = payload.dueDate || payload.expire_date || new Date(baseIssueDate.getTime() + 14 * 86400000);
+  payload.dueDate = effectiveDueDate;
+  payload.expire_date = effectiveDueDate;
+
   if (!payload.statutorySnapshot && payload.items) {
     const taxBreakdown = computeStatutoryTaxBreakdown(payload.items, payload.subTotal, payload.discountedPrice, payload.vat);
     payload.statutorySnapshot = {
       issueDateFormatted: formatDutchDate(payload.date || new Date()),
-      dueDateFormatted: formatDutchDate(payload.dueDate || new Date(Date.now() + 14 * 86400000)),
+      dueDateFormatted: formatDutchDate(effectiveDueDate),
       deliveryDateFormatted: formatDutchDate(payload.deliveryDate || payload.date || new Date()),
       currency: 'EUR',
       currencySymbol: '€',
@@ -127,6 +137,9 @@ const sanitizeInvoicePayload = async (data) => {
       total: payload.total,
       isImmutableFrozen: true,
     };
+  } else if (payload.statutorySnapshot) {
+    payload.statutorySnapshot.dueDateFormatted = formatDutchDate(effectiveDueDate);
+    payload.statutorySnapshot.issueDateFormatted = formatDutchDate(payload.date || new Date());
   }
 
   if (!payload.financialTemplate) {
@@ -243,6 +256,13 @@ exports.updateInvoice = async (req, res) => {
       });
     }
 
+    // Task 41: Harmonize incoming dueDate and expire_date
+    if (req.body.dueDate && !req.body.expire_date) {
+      req.body.expire_date = req.body.dueDate;
+    } else if (req.body.expire_date && !req.body.dueDate) {
+      req.body.dueDate = req.body.expire_date;
+    }
+
     const sanitizedData = await sanitizeInvoicePayload(req.body);
     const updatedInvoice = await Invoice.findByIdAndUpdate(id, sanitizedData, {
       new: true, // Return the updated document
@@ -268,6 +288,7 @@ exports.invoiceList = async (req, res) => {
   try {
     const invoiceList = await Invoice.find(filter).populate('customer','firstName lastName').populate('contactPerson', 'username').sort({ createdAt: -1 });
     const { roundToCents } = require('../utils/financialLedger');
+    const { formatDutchDate } = require('../utils/statutoryInvoice');
     const enrichedList = invoiceList.map(inv => {
       const invObj = inv.toObject ? inv.toObject() : { ...inv };
       const paid = roundToCents(Number(invObj.paid) || 0);
@@ -276,6 +297,13 @@ exports.invoiceList = async (req, res) => {
       invObj.balanceDue = (invObj.balanceDue !== undefined && !isNaN(invObj.balanceDue))
         ? roundToCents(invObj.balanceDue)
         : Math.max(0, roundToCents(total - paid - credited));
+      const effectiveDueDate = invObj.dueDate || invObj.expire_date || (invObj.date ? new Date(new Date(invObj.date).getTime() + 14 * 86400000) : null);
+      if (effectiveDueDate) {
+        invObj.dueDateFormatted = formatDutchDate(effectiveDueDate);
+      }
+      if (invObj.date || invObj.createdAt) {
+        invObj.issueDateFormatted = formatDutchDate(invObj.date || invObj.createdAt);
+      }
       return invObj;
     });
     res.json({
@@ -316,11 +344,19 @@ exports.invoiceDetail = async (req, res) => {
 
     // EXEC-22: Authoritative Financial Ledger Balance Projection
     const { calculateInvoiceBalance } = require('../utils/financialLedger');
+    const { formatDutchDate } = require('../utils/statutoryInvoice');
     const balanceInfo = await calculateInvoiceBalance(invoiceObj);
     invoiceObj.paid = balanceInfo.totalPaid;
     invoiceObj.credited = balanceInfo.totalCredited;
     invoiceObj.balanceDue = balanceInfo.balanceDue;
     invoiceObj.payment = balanceInfo.paymentStatus;
+
+    // Task 41: Canonical date formatting for CRM view
+    const effectiveDueDate = invoiceObj.dueDate || invoiceObj.expire_date || (invoiceObj.date ? new Date(new Date(invoiceObj.date).getTime() + 14 * 86400000) : new Date(Date.now() + 14 * 86400000));
+    invoiceObj.dueDate = invoiceObj.dueDate || effectiveDueDate;
+    invoiceObj.expire_date = invoiceObj.expire_date || effectiveDueDate;
+    invoiceObj.dueDateFormatted = formatDutchDate(effectiveDueDate);
+    invoiceObj.issueDateFormatted = formatDutchDate(invoiceObj.date || invoiceObj.createdAt || new Date());
 
     res.json({ invoice: invoiceObj });
   } catch (err) {
@@ -460,6 +496,8 @@ exports.DownloadInvoicePDF = async (req, res) => {
     const calc = calculateCommercialTotals(invoice);
     const taxBreakdown = computeStatutoryTaxBreakdown(calc.items, calc.subTotal, calc.discountedPrice, calc.vat);
 
+    const effectiveDueDate = invoice.dueDate || invoice.expire_date || (invoice.date ? new Date(new Date(invoice.date).getTime() + 14 * 86400000) : new Date(Date.now() + 14 * 86400000));
+    const formattedDueDate = formatDutchDate(effectiveDueDate);
     const freshInvoice = {
       ...(invoice.toObject ? invoice.toObject() : invoice),
       subTotal: calc.subTotal,
@@ -471,7 +509,9 @@ exports.DownloadInvoicePDF = async (req, res) => {
       totalVat: calc.totalVat,
       items: calc.items,
       date: formatDutchDate(invoice.date || invoice.createdAt || new Date()),
-      dueDate: formatDutchDate(invoice.dueDate || (invoice.date ? new Date(new Date(invoice.date).getTime() + 14 * 86400000) : new Date(Date.now() + 14 * 86400000))),
+      dueDate: formattedDueDate,
+      expire_date: formattedDueDate,
+      dueDateFormatted: formattedDueDate,
       deliveryDate: formatDutchDate(invoice.deliveryDate || invoice.date || invoice.createdAt || new Date()),
       taxBreakdown,
     };
@@ -708,6 +748,10 @@ exports.createInvoicePDF = async (req, res) => {
 
     // EXEC-20: Authoritative Recalculation
     const calc = calculateCommercialTotals(invoice);
+    const { formatDutchDate } = require('../utils/statutoryInvoice');
+    const effectiveDueDate = invoice.dueDate || invoice.expire_date || (invoice.date ? new Date(new Date(invoice.date).getTime() + 14 * 86400000) : new Date(Date.now() + 14 * 86400000));
+    const formattedDueDate = formatDutchDate(effectiveDueDate);
+    const formattedIssueDate = formatDutchDate(invoice.date || invoice.createdAt || new Date());
     const freshInvoice = {
       ...(invoice.toObject ? invoice.toObject() : invoice),
       subTotal: calc.subTotal,
@@ -718,6 +762,11 @@ exports.createInvoicePDF = async (req, res) => {
       net: calc.net,
       totalVat: calc.totalVat,
       items: calc.items,
+      date: formattedIssueDate,
+      dueDate: formattedDueDate,
+      expire_date: formattedDueDate,
+      dueDateFormatted: formattedDueDate,
+      issueDateFormatted: formattedIssueDate,
     };
 
     let attachments = [];
