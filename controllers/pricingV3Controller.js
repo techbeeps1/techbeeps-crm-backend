@@ -46,6 +46,15 @@ exports.calculatePrice = async (req, res) => {
       },
     });
   } catch (error) {
+    if (error.isValidationError || error.name === 'PricingValidationError') {
+      return res.status(400).json({
+        success: false,
+        error: error.code || 'VALIDATION_ERROR',
+        message: error.message,
+        field: error.field,
+        probe: error.probe,
+      });
+    }
     console.error('[PricingEngineV3 Error]:', error);
     return res.status(500).json({
       success: false,
@@ -84,6 +93,15 @@ exports.getAdvice = async (req, res) => {
       },
     });
   } catch (error) {
+    if (error.isValidationError || error.name === 'PricingValidationError') {
+      return res.status(400).json({
+        success: false,
+        error: error.code || 'VALIDATION_ERROR',
+        message: error.message,
+        field: error.field,
+        probe: error.probe,
+      });
+    }
     console.error('[PricingEngineV3 Advice Error]:', error);
     return res.status(500).json({
       success: false,

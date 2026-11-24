@@ -136,9 +136,186 @@ function deepMerge(base, over) {
 }
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const fmt1 = v => (Math.round(v * 10) / 10).toString();
+
+class PricingValidationError extends Error {
+  constructor(message, { code = 'VALIDATION_ERROR', field = null, probe = null } = {}) {
+    super(message);
+    this.name = 'PricingValidationError';
+    this.isValidationError = true;
+    this.code = code;
+    this.field = field;
+    this.probe = probe;
+  }
+}
+
+function isValidClockTime(t) {
+  if (t === '' || t === null || t === undefined) return true;
+  if (typeof t !== 'string') return false;
+  const match = t.match(/^([01]\d|2[0-3]):[0-5]\d$/);
+  return !!match;
+}
+
 // 'HH:MM' -> hours as a number; empty or invalid -> null
 function tijdU(t) { if (t === '' || t === null || t === undefined) return null; if (typeof t === 'number') return t; const m = String(t).match(/^(\d{1,2}):(\d{2})/); return m ? Number(m[1]) + Number(m[2]) / 60 : null; }
 function vensterU(v) { if (!v) return null; const a = tijdU(v.van), b = tijdU(v.tot); if (a === null || b === null || a === b) return null; return b > a ? b - a : b + 24 - a; }
+
+/**
+ * Validates a job configuration against the active pricing settings.
+ * Enforces all 12 validation probe rules (N16-01 to N16-12) to prevent silent fallbacks or corruption.
+ */
+function validateJobInput(job, settings, options = {}) {
+  if (!job || typeof job !== 'object') {
+    throw new PricingValidationError('Job configuration must be a non-null object', {
+      code: 'INVALID_JOB_PAYLOAD',
+    });
+  }
+
+  const S = settings || DEFAULTS;
+
+  // Probe N16-01 & N16-05: Volume (m3) validation
+  if (job.m3 === undefined || job.m3 === null || (typeof job.m3 === 'string' && isNaN(Number(job.m3)))) {
+    throw new PricingValidationError(
+      `Volume (m3) must be a valid number, received: ${JSON.stringify(job.m3)}`,
+      { code: 'INVALID_VOLUME', field: 'm3', probe: 'N16-01' }
+    );
+  }
+  const m3Num = Number(job.m3);
+  if (!Number.isFinite(m3Num) || isNaN(m3Num)) {
+    throw new PricingValidationError(
+      `Volume (m3) must be a finite number, received: ${job.m3}`,
+      { code: 'INVALID_VOLUME', field: 'm3', probe: 'N16-01' }
+    );
+  }
+  if (m3Num < 0) {
+    throw new PricingValidationError(
+      `Volume (m3) cannot be negative, received: ${m3Num}`,
+      { code: 'INVALID_VOLUME', field: 'm3', probe: 'N16-05' }
+    );
+  }
+
+  // Probe N16-02 & N16-06: Crew (ploeg) validation
+  const checkCrew = !options.skipTruckAndCrew || job.ploeg !== undefined;
+  if (checkCrew) {
+    if (job.ploeg === undefined || job.ploeg === null || isNaN(Number(job.ploeg))) {
+      throw new PricingValidationError(
+        `Crew size (ploeg) must be a valid number, received: ${JSON.stringify(job.ploeg)}`,
+        { code: 'INVALID_CREW', field: 'ploeg', probe: 'N16-02' }
+      );
+    }
+    const ploegNum = Number(job.ploeg);
+    if (!Number.isInteger(ploegNum)) {
+      throw new PricingValidationError(
+        `Crew size (ploeg) must be an integer, received fractional: ${ploegNum}`,
+        { code: 'INVALID_CREW_INTEGER', field: 'ploeg', probe: 'N16-06' }
+      );
+    }
+    if (ploegNum < 1) {
+      throw new PricingValidationError(
+        `Crew size (ploeg) must be at least 1, received: ${ploegNum}`,
+        { code: 'INVALID_CREW', field: 'ploeg', probe: 'N16-02' }
+      );
+    }
+  }
+
+  // Probe N16-03: Truck (wagen) validation
+  const checkTruck = !options.skipTruckAndCrew || job.wagen !== undefined;
+  if (checkTruck) {
+    if (!job.wagen || typeof job.wagen !== 'string') {
+      throw new PricingValidationError(
+        `Truck ID (wagen) is required and must be a string`,
+        { code: 'INVALID_TRUCK', field: 'wagen', probe: 'N16-03' }
+      );
+    }
+    const truckList = Array.isArray(S.wagens) ? S.wagens : [];
+    const matchedTruck = truckList.find(w => w.id === job.wagen);
+    if (!matchedTruck) {
+      throw new PricingValidationError(
+        `Unknown truck id: "${job.wagen}". Available trucks: ${truckList.map(w => w.id).join(', ')}`,
+        { code: 'UNKNOWN_TRUCK', field: 'wagen', probe: 'N16-03' }
+      );
+    }
+  }
+
+  // Probe N16-04: VAT Regime (btw_regime) validation
+  if (job.btw_regime !== undefined && job.btw_regime !== null) {
+    const allowedRegimes = ['auto', 'nl', 'nul', 'verlegd', 'buitenland'];
+    if (!allowedRegimes.includes(job.btw_regime)) {
+      throw new PricingValidationError(
+        `Unknown VAT regime: "${job.btw_regime}". Allowed regimes: ${allowedRegimes.join(', ')}`,
+        { code: 'UNKNOWN_VAT_REGIME', field: 'btw_regime', probe: 'N16-04' }
+      );
+    }
+  }
+
+  // Probe N16-07: Clock format validation in time windows (HH:MM 00:00 - 23:59)
+  if (job.venster && typeof job.venster === 'object') {
+    for (const key of ['laden', 'lossen', 'dag']) {
+      const win = job.venster[key];
+      if (win && typeof win === 'object') {
+        if (!isValidClockTime(win.van)) {
+          throw new PricingValidationError(
+            `Invalid clock time for window "${key}.van": "${win.van}". Expected valid 24h format HH:MM (00:00 to 23:59).`,
+            { code: 'INVALID_TIME_WINDOW', field: `venster.${key}.van`, probe: 'N16-07' }
+          );
+        }
+        if (!isValidClockTime(win.tot)) {
+          throw new PricingValidationError(
+            `Invalid clock time for window "${key}.tot": "${win.tot}". Expected valid 24h format HH:MM (00:00 to 23:59).`,
+            { code: 'INVALID_TIME_WINDOW', field: `venster.${key}.tot`, probe: 'N16-07' }
+          );
+        }
+      }
+    }
+  }
+
+  // Probe N16-08: Same-day booking chronological window feasibility
+  if (job.venster && job.venster.laden && job.venster.lossen) {
+    const lVan = tijdU(job.venster.laden.van);
+    const lTot = tijdU(job.venster.laden.tot);
+    const uVan = tijdU(job.venster.lossen.van);
+    const uTot = tijdU(job.venster.lossen.tot);
+    const isExplicitMultiDay = job.overnachten === 'ja' || (Number(job.nachten) > 0);
+    if (!isExplicitMultiDay && lVan !== null && uVan !== null) {
+      if (uVan < lVan || (lTot !== null && uVan < lTot)) {
+        throw new PricingValidationError(
+          `Same-day booking requires chronological feasibility: unloading window (${job.venster.lossen.van || ''}-${job.venster.lossen.tot || ''}) cannot precede loading window (${job.venster.laden.van || ''}-${job.venster.laden.tot || ''}).`,
+          { code: 'CHRONOLOGICAL_WINDOW_CONFLICT', field: 'venster', probe: 'N16-08' }
+        );
+      }
+    }
+  }
+
+  // Probe N16-11: Catalogue material ID validation
+  if (Array.isArray(job.materiaal)) {
+    const matList = Array.isArray(S.materiaal) ? S.materiaal : [];
+    for (let i = 0; i < job.materiaal.length; i++) {
+      const item = job.materiaal[i];
+      if (item && item.id && (item.n === undefined || Number(item.n) > 0)) {
+        const found = matList.find(m => m.id === item.id);
+        if (!found) {
+          throw new PricingValidationError(
+            `Unknown material item ID: "${item.id}" at index ${i}. Available materials: ${matList.map(m => m.id).join(', ')}`,
+            { code: 'UNKNOWN_MATERIAL', field: `materiaal[${i}].id`, probe: 'N16-11' }
+          );
+        }
+      }
+    }
+  }
+
+  // Probe N16-12: Commercial profile validation
+  if (job.profiel !== undefined && job.profiel !== null) {
+    const profList = Array.isArray(S.profielen) ? S.profielen : [];
+    const foundProf = profList.find(p => p.id === job.profiel);
+    if (!foundProf) {
+      throw new PricingValidationError(
+        `Unknown commercial profile id: "${job.profiel}". Available profiles: ${profList.map(p => p.id).join(', ')}`,
+        { code: 'UNKNOWN_PROFILE', field: 'profiel', probe: 'N16-12' }
+      );
+    }
+  }
+
+  return true;
+}
 
 function kostManuur(S) {
   const a = S.arbeid;
@@ -305,7 +482,8 @@ function calcCore(S, K, f, modus) {
   // furniture lift
   const liftU = K.lift_inzet ? num(K.lift_uren) : 0;
   const liftKost = liftU * num(S.lift.kost_uur);
-  const liftVerkoop = !K.lift_inzet ? 0 : (S.lift.verkoop_modus === 'vast' ? num(S.lift.eerste_uur) + Math.max(0, liftU - 1) * 2 * num(S.lift.per_halfuur) : liftKost / (1 - m));
+  const halfHours = Math.ceil(Math.max(0, liftU - 1) * 2 - 1e-9);
+  const liftVerkoop = !K.lift_inzet ? 0 : (S.lift.verkoop_modus === 'vast' ? num(S.lift.eerste_uur) + halfHours * num(S.lift.per_halfuur) : liftKost / (1 - m));
   // materials
   let matKost = 0, matVerkoop = 0;
   for (const x of (K.materiaal || [])) { const it = S.materiaal.find(y => y.id === x.id); if (!it) continue; matKost += num(x.n) * num(it.kost); matVerkoop += num(x.n) * (it.verkoop_modus === 'vast' ? num(it.verkoop) : num(it.kost) / (1 - m)); }
@@ -378,6 +556,7 @@ function afronden(S, b) {
 
 function advies(S, K) {
   // best combination of truck(s) and crew: feasible first (time windows, minimum crew), then fewest days, then lowest fixed price
+  validateJobInput(K, S, { skipTruckAndCrew: true });
   K = Object.assign(clone(KLUS_EXTRA), K);
   const strikt = S.ploeg.special_tekort === 'waarschuw';
   const minSp = minPloegSpecials(S, K);
@@ -402,6 +581,7 @@ function advies(S, K) {
 }
 
 function calc(S, K) {
+  validateJobInput(K, S);
   K = Object.assign(clone(KLUS_EXTRA), K);
   const modus = kiesModus(S, K);
   const b = calcCore(S, K, 1, modus), up = calcCore(S, K, 1.2, modus), dn = calcCore(S, K, 0.8, modus);
@@ -427,7 +607,10 @@ function calc(S, K) {
   else if (b.dagen > 1) warnings.push(MSG.dag(fmt1(b.doorloop), fmt1(b.maxDag), b.dagen));
   if (!b.overnacht && b.lokaalOnhaalbaar) warnings.push(b.rijMin > num(S.reis.max_rijtijd_min) ? MSG.rij(Math.round(b.rijMin), num(S.reis.max_rijtijd_min)) : MSG.lokaal);
   if (b.overU > 0.05) warnings.push(MSG.overwerk(fmt1(b.overU)));
-  if (b.douaneN > 0 && !num((S.internationaal || {}).douane_kost) && (S.internationaal || {}).douane_verkoop_modus !== 'vast') warnings.push(MSG.douane0);
+  const douaneOntbreekt = (S.internationaal || {}).douane_verkoop_modus === 'vast'
+    ? (!num((S.internationaal || {}).douane_vast) || !num((S.internationaal || {}).douane_kost))
+    : !num((S.internationaal || {}).douane_kost);
+  if (b.douaneN > 0 && douaneOntbreekt) warnings.push(MSG.douane0);
   if (K.land_van !== 'nl' || K.land_naar !== 'nl') warnings.push(MSG.tacho);
   if (b.regime === 'nul') warnings.push(MSG.btw.nul);
   if (b.regime === 'verlegd') warnings.push(MSG.btw.verlegd);
@@ -560,5 +743,8 @@ if (typeof module !== 'undefined') {
     resolveSettingsAsync,
     calculatePrice,
     calculateAdvice,
+    validateJobInput,
+    PricingValidationError,
+    isValidClockTime,
   };
 }
