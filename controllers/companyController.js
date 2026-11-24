@@ -106,7 +106,7 @@ exports.getCompanyDetails = async (req, res) => {
         companyCountry: 'Netherlands',
         companyEmail: 'info@universalmovers.nl',
         companyPhone: '+31 20 123 4567',
-        companyWebsite: 'https://universalmovers.nl',
+        companyWebsite: 'https://universal-movers-front.vercel.app',
         companyRegNumber: '81234567',
         companyVatNumber: 'NL861234567B01',
         companyTaxNumber: 'NL861234567B01',

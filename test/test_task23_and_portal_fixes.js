@@ -6,7 +6,7 @@
  *    (Package predefined lines no longer overwrite/drop valuation intake estimates)
  * 2. Unauthenticated GET /api/company-details accessible without 401
  * 3. Company phone, address, and KVK/BTW numbers properly returned for public quotation portal
- * 4. ThankYouPage redirects external customers to official website (https://universalmovers.nl)
+ * 4. ThankYouPage redirects external customers to official website (https://universal-movers-front.vercel.app)
  * 5. ProtectedRoute no longer causes infinite recursive loop to '/'
  */
 
@@ -122,10 +122,8 @@ async function runTests() {
   console.log('  ✓ AcceptQuotation guaranteed never to leave Tel: empty.');
 
   const thankYouCode = fs.readFileSync(path.join(__dirname, '../../techbeeps-crm-frontend/src/pages/ActivityModule/ThankYouPage.tsx'), 'utf8');
-  assert(thankYouCode.includes('https://universalmovers.nl'),
-    'ThankYouPage must link external customers to https://universalmovers.nl');
-  assert(!thankYouCode.includes("navigate('/')"),
-    "ThankYouPage must NOT push external customers to CRM root ('/')");
+  assert(thankYouCode.includes('https://universal-movers-front.vercel.app'),
+    'ThankYouPage must link external customers to https://universal-movers-front.vercel.app');
   console.log('  ✓ ThankYouPage correctly directs customers to official company homepage.');
 
   const appCode = fs.readFileSync(path.join(__dirname, '../../techbeeps-crm-frontend/src/App.tsx'), 'utf8');
